@@ -1,10 +1,29 @@
 {
 	"name": "firebase-admin-cloudflare",
-	"version": "0.0.0",
+	"version": "0.0.1",
 	"description": "A Firestore Admin SDK implementation that works on Cloudflare Workers (REST + WebChannel).",
 	"license": "MIT",
+	"repository": "github:ljoukov/firebase-admin-cloudflare",
+	"bugs": "https://github.com/ljoukov/firebase-admin-cloudflare/issues",
+	"homepage": "https://github.com/ljoukov/firebase-admin-cloudflare#readme",
+	"keywords": [
+		"firebase",
+		"firestore",
+		"admin",
+		"cloudflare",
+		"workers",
+		"webchannel"
+	],
 	"type": "module",
 	"sideEffects": false,
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=18"
+	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -32,7 +51,9 @@
 		"lint": "npm run typecheck && npm run eslint",
 		"format": "prettier --write \"src/**/*.{ts,js,json,md}\" \"tests/**/*.{ts,js,json,md}\" \"examples/**/*.{ts,js,json,md}\" \"*.{json,md}\"",
 		"example:dev": "node scripts/example-dev.js",
-		"check": "npm run format && npm run lint && npm run test && npm run build"
+		"check": "npm run format && npm run lint && npm run test && npm run build",
+		"verify": "npm run lint && npm run test && npm run build",
+		"prepack": "npm run verify"
 	},
 	"dependencies": {
 		"@firebase/webchannel-wrapper": "^1.0.5",
