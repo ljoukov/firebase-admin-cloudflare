@@ -3,7 +3,10 @@
 	"version": "0.0.1",
 	"description": "A Firestore Admin SDK implementation that works on Cloudflare Workers (REST + WebChannel).",
 	"license": "MIT",
-	"repository": "github:ljoukov/firebase-admin-cloudflare",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ljoukov/firebase-admin-cloudflare.git"
+	},
 	"bugs": "https://github.com/ljoukov/firebase-admin-cloudflare/issues",
 	"homepage": "https://github.com/ljoukov/firebase-admin-cloudflare#readme",
 	"keywords": [
