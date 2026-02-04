@@ -1,0 +1,4 @@
+name = "firebase-admin-cloudflare-example"
+main = "index.ts"
+compatibility_date = "2026-02-04"
+
