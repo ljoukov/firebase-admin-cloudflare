@@ -1,5 +1,5 @@
 {
-	"name": "firebase-admin-cloudflare",
+	"name": "@ljoukov/firebase-admin-cloudflare",
 	"version": "0.0.1",
 	"description": "A Firestore Admin SDK implementation that works on Cloudflare Workers (REST + WebChannel).",
 	"license": "MIT",

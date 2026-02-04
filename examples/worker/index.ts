@@ -4,7 +4,6 @@ import { FieldValue } from '../../src/firestore/index.js';
 
 type Env = {
 	GOOGLE_SERVICE_ACCOUNT_JSON: string;
-	GOOGLE_API_KEY?: string;
 	FIRESTORE_EMULATOR_HOST?: string;
 };
 
@@ -65,7 +64,7 @@ function ensureFirestore(env: Env) {
 			? env.FIRESTORE_EMULATOR_HOST
 			: `http://${env.FIRESTORE_EMULATOR_HOST}`
 		: undefined;
-	cachedFirestore = new Firestore({ app, apiKey: env.GOOGLE_API_KEY, baseUrl });
+	cachedFirestore = new Firestore({ app, baseUrl });
 	return cachedFirestore;
 }
 

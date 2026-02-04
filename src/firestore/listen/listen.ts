@@ -29,7 +29,6 @@ type FirestoreLike = {
 	_getRestClient(): FirestoreRestClient;
 	_getBaseUrl(): string;
 	_getAccessToken(): Promise<string | null>;
-	_getApiKey(): string | null;
 };
 
 function decodeDocumentFields(
@@ -52,14 +51,10 @@ export async function listenToDocument(options: {
 	const database = rest.databaseResourceName();
 	const documentName = rest.documentResourceName(options.documentPath);
 	const accessToken = await options.firestore._getAccessToken();
-	const apiKey = options.firestore._getApiKey();
 
 	const headers: Record<string, string> = {};
 	if (accessToken) {
 		headers.Authorization = `Bearer ${accessToken}`;
-	}
-	if (apiKey) {
-		headers['x-goog-api-key'] = apiKey;
 	}
 
 	let closed = false;

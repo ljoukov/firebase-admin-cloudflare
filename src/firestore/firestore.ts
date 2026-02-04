@@ -117,27 +117,16 @@ function baseUrlFromEnv(): string {
 	return 'https://firestore.googleapis.com';
 }
 
-function apiKeyFromEnv(): string | undefined {
-	const apiKey = (globalThis as unknown as { process?: { env?: Record<string, string> } }).process
-		?.env?.GOOGLE_API_KEY;
-	if (!apiKey || apiKey.trim().length === 0) {
-		return undefined;
-	}
-	return apiKey.trim();
-}
-
 export class Firestore {
 	private readonly rest: FirestoreRestClient;
 	private readonly projectId: string;
 	private readonly baseUrl: string;
-	private readonly apiKey: string | null;
 	private readonly accessTokenProvider: () => Promise<string | null>;
 
-	constructor(options: { app: App; baseUrl?: string; apiKey?: string }) {
+	constructor(options: { app: App; baseUrl?: string }) {
 		const serviceAccount = options.app.options.credential.getServiceAccount();
 		this.projectId = options.app.options.projectId ?? serviceAccount.projectId;
 		this.baseUrl = options.baseUrl ?? baseUrlFromEnv();
-		this.apiKey = options.apiKey?.trim().length ? options.apiKey.trim() : null;
 
 		this.accessTokenProvider = async () => {
 			if (this.baseUrl !== 'https://firestore.googleapis.com') {
@@ -233,10 +222,6 @@ export class Firestore {
 
 	async _getAccessToken(): Promise<string | null> {
 		return await this.accessTokenProvider();
-	}
-
-	_getApiKey(): string | null {
-		return this.apiKey;
 	}
 }
 
@@ -597,7 +582,7 @@ export function getFirestore(app: App = getApp()): Firestore {
 	if (existing) {
 		return existing;
 	}
-	const firestore = new Firestore({ app, apiKey: apiKeyFromEnv() });
+	const firestore = new Firestore({ app });
 	firestoreInstances.set(app, firestore);
 	return firestore;
 }
