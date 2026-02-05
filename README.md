@@ -32,39 +32,37 @@ npm i @ljoukov/firebase-admin-cloudflare
 
 ### Initialize
 
-This library does **not** auto-detect credentials from the environment. Even if you store your key in
-`GOOGLE_SERVICE_ACCOUNT_JSON`, you still need to pass a credential to `initializeApp()`.
+By default, `initializeApp()` reads credentials from `GOOGLE_SERVICE_ACCOUNT_JSON` (service account key JSON) via a
+global binding (Workers service-worker syntax) or `process.env` (Node).
 
-**Recommended:** store the downloaded service account key JSON in `GOOGLE_SERVICE_ACCOUNT_JSON` and map it to `cert()`:
+```ts
+import { initializeApp } from '@ljoukov/firebase-admin-cloudflare/app';
+import { FieldValue, getFirestore } from '@ljoukov/firebase-admin-cloudflare/firestore';
+
+const app = initializeApp();
+const db = getFirestore(app);
+```
+
+Cloudflare Workers (module syntax) exposes secrets on the `env` argument, so pass it explicitly:
+
+```ts
+const app = initializeApp({ serviceAccountJson: env.GOOGLE_SERVICE_ACCOUNT_JSON });
+const db = getFirestore(app);
+```
+
+You can also provide a credential directly:
 
 ```ts
 import { cert, initializeApp } from '@ljoukov/firebase-admin-cloudflare/app';
-import { FieldValue, getFirestore } from '@ljoukov/firebase-admin-cloudflare/firestore';
 
-type Env = { GOOGLE_SERVICE_ACCOUNT_JSON: string };
-
-export function getDb(env: Env) {
-	const sa = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
-
-	const app = initializeApp({
-		credential: cert({
-			projectId: sa.project_id,
-			clientEmail: sa.client_email,
-			privateKey: String(sa.private_key).replace(/\\n/g, '\n')
-		}),
-		projectId: sa.project_id
-	});
-
-	return getFirestore(app);
-}
-
-// Cloudflare Workers: getDb(env)
-// Node/local: getDb({ GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON! })
+const app = initializeApp({
+	credential: cert({
+		projectId: 'my-project',
+		clientEmail: 'firebase-adminsdk-…@my-project.iam.gserviceaccount.com',
+		privateKey: '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n'
+	})
+});
 ```
-
-The `cert({ projectId, clientEmail, privateKey })` values are the same data found in the service account JSON
-(`project_id`, `client_email`, `private_key`) — the snippet above just shows the recommended way to load them from a
-secret instead of hardcoding.
 
 ### Read / write documents
 
@@ -149,6 +147,7 @@ This library authenticates to Firestore using a **Google service account** and o
 with the `https://www.googleapis.com/auth/datastore` scope.
 
 - This project does **not** use Application Default Credentials (ADC) or `GOOGLE_APPLICATION_CREDENTIALS`.
+- If you don’t pass `credential`, `initializeApp()` will use `GOOGLE_SERVICE_ACCOUNT_JSON` (if available).
 - Treat your service account JSON / private key as a **server secret**.
 - Never ship it to browsers.
 - In Cloudflare, store it as a **secret** (e.g. `GOOGLE_SERVICE_ACCOUNT_JSON`).

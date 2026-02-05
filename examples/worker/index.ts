@@ -1,5 +1,4 @@
-import { Firestore, cert, getApps, initializeApp } from '../../src/index.js';
-import { parseServiceAccountJson } from '../../src/google/service-account.js';
+import { Firestore, getApps, initializeApp } from '../../src/index.js';
 import { FieldValue } from '../../src/firestore/index.js';
 
 type Env = {
@@ -37,15 +36,9 @@ function ensureApp(env: Env) {
 		throw new Error('Missing GOOGLE_SERVICE_ACCOUNT_JSON');
 	}
 
-	const sa = parseServiceAccountJson(env.GOOGLE_SERVICE_ACCOUNT_JSON);
 	const app = initializeApp(
 		{
-			credential: cert({
-				projectId: sa.projectId,
-				clientEmail: sa.clientEmail,
-				privateKey: sa.privateKey
-			}),
-			projectId: sa.projectId
+			serviceAccountJson: env.GOOGLE_SERVICE_ACCOUNT_JSON
 		},
 		'example'
 	);
