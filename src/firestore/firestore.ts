@@ -872,9 +872,13 @@ export class Transaction {
 		if (this.didWrite) {
 			throw new Error('Firestore transactions require all reads to be performed before writes.');
 		}
-		const doc = await this.firestore
-			._getRestClient()
-			.getDocument({ documentPath: ref.path, transaction: this.transactionId });
+		const rest = this.firestore._getRestClient();
+		const docName = rest.documentResourceName(ref.path);
+		const responses = await rest.batchGetDocuments({
+			documentNames: [docName],
+			transaction: this.transactionId
+		});
+		const doc = responses.find((resp) => !!resp.found)?.found ?? null;
 		if (!doc) {
 			return new DocumentSnapshot<T>({ ref, exists: false, data: null });
 		}

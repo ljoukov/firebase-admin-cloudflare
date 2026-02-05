@@ -70,6 +70,14 @@ export const RunQueryResponseSchema = z.object({
 	transaction: z.string().optional()
 });
 
+export const BatchGetDocumentsResponseSchema = z.object({
+	found: FirestoreDocumentSchema.optional(),
+	missing: z.string().optional(),
+	readTime: z.string().optional()
+});
+
+export type BatchGetDocumentsResponse = z.infer<typeof BatchGetDocumentsResponseSchema>;
+
 export const BeginTransactionResponseSchema = z.object({
 	transaction: z.string().trim().min(1)
 });

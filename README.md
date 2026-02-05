@@ -234,6 +234,7 @@ See `examples/README.md` for more context.
 
 - `npm run check` → format + lint + tests + build (local)
 - `npm run verify` → lint + tests + build (CI/publish)
+- `npm run test:integration` → runs integration tests against the Firestore emulator (requires Java)
 
 ## Limitations / roadmap
 

@@ -49,7 +49,10 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc --noEmit",
-		"test": "vitest --run",
+		"test": "npm run test:unit",
+		"test:unit": "vitest --run",
+		"test:integration:vitest": "vitest --run --config vitest.integration.config.ts",
+		"test:integration": "node scripts/test-firestore-emulator.js",
 		"eslint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"examples/**/*.ts\"",
 		"lint": "npm run typecheck && npm run eslint",
 		"format": "prettier --write \"src/**/*.{ts,js,json,md}\" \"tests/**/*.{ts,js,json,md}\" \"examples/**/*.{ts,js,json,md}\" \"*.{json,md}\"",
@@ -70,6 +73,7 @@
 		"prettier": "^3.8.0",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.53.0",
+		"firebase-tools": "^14.4.0",
 		"vitest": "^4.0.17",
 		"wrangler": "^4.6.0"
 	}

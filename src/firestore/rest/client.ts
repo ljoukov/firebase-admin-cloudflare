@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
-import type { CommitResponse, FirestoreDocument, RunQueryResponse } from './types.js';
+import type {
+	BatchGetDocumentsResponse,
+	CommitResponse,
+	FirestoreDocument,
+	RunQueryResponse
+} from './types.js';
 import {
+	BatchGetDocumentsResponseSchema,
 	BeginTransactionResponseSchema,
 	CommitResponseSchema,
 	FirestoreDocumentSchema,
@@ -116,6 +122,10 @@ export class FirestoreRestClient {
 		return `${this.baseUrl}/v1/${encoded}:listCollectionIds`;
 	}
 
+	batchGetDocumentsUrl(): string {
+		return `${this.baseUrl}/v1/${this.databaseResourceName()}/documents:batchGet`;
+	}
+
 	async getDocument(options: {
 		documentPath: string;
 		transaction?: string;
@@ -134,6 +144,34 @@ export class FirestoreRestClient {
 		}
 		const json = await resp.json();
 		return FirestoreDocumentSchema.parse(json);
+	}
+
+	async batchGetDocuments(options: {
+		documentNames: string[];
+		transaction?: string;
+	}): Promise<BatchGetDocumentsResponse[]> {
+		const body: Record<string, unknown> = {
+			documents: options.documentNames
+		};
+		if (options.transaction) {
+			body.transaction = options.transaction;
+		}
+
+		const resp = await this.authedFetch(this.batchGetDocumentsUrl(), {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!resp.ok) {
+			throw await this.toError(resp, 'Firestore batchGetDocuments failed');
+		}
+
+		const json = await resp.json();
+		const parsed = z.array(BatchGetDocumentsResponseSchema).safeParse(json);
+		if (!parsed.success) {
+			throw new Error('Firestore batchGetDocuments returned an invalid JSON payload.');
+		}
+		return parsed.data;
 	}
 
 	async deleteDocument(options: { documentPath: string }): Promise<void> {

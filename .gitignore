@@ -3,6 +3,10 @@ dist
 
 .DS_Store
 
+# Firebase emulator logs
+firebase-debug.log
+firestore-debug.log
+
 # Local env files (never commit secrets)
 .env.local
 **/.env.local
@@ -12,4 +16,3 @@ dist
 # Wrangler
 .wrangler
 **/.wrangler
-
