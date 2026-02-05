@@ -6,7 +6,7 @@ import type { FirestoreValue } from '../rest/types.js';
 import { fromFirestoreValue } from '../rest/value.js';
 
 import { openWebChannel } from './webchannel.js';
-import { ListenResponseSchema, WebChannelErrorSchema } from './types.js';
+import { ListenResponseSchema, type ListenResponse, WebChannelErrorSchema } from './types.js';
 
 const AddTargetRequestSchema = z.object({
 	database: z.string().min(1),
@@ -157,7 +157,7 @@ export async function listenToQuery(options: {
 	firestore: FirestoreLike;
 	parentResourceName: string;
 	structuredQuery: unknown;
-	onNext: () => void;
+	onMessage: (message: ListenResponse) => void;
 	onError?: (error: unknown) => void;
 }): Promise<Unsubscribe> {
 	const rest = options.firestore._getRestClient();
@@ -199,16 +199,7 @@ export async function listenToQuery(options: {
 			if (!parsed.success) {
 				return;
 			}
-
-			const value = parsed.data;
-			if (
-				'documentChange' in value ||
-				'documentDelete' in value ||
-				'documentRemove' in value ||
-				'filter' in value
-			) {
-				options.onNext();
-			}
+			options.onMessage(parsed.data);
 		},
 		onError(error) {
 			if (closed) {

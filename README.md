@@ -261,7 +261,6 @@ See `examples/README.md` for more context.
 
 ## Limitations / roadmap
 
-- Query listeners refresh snapshots via REST `get()` on each WebChannel event (no incremental watch stream processing).
 - `firestore.bundle(...).build()` is not implemented yet (method exists; `build()` throws).
 - API compatibility with `firebase-admin` is a goal, but only the subset needed by upstream projects is implemented first.
 

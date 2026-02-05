@@ -66,7 +66,7 @@ Note: write methods return a `WriteResult` (with `writeTime`), matching the Admi
 - `Query.get()`
 - Aggregations: `Query.count()`, `Query.aggregate({...}).get()` (uses REST `runAggregationQuery`)
 - Partition queries: `Query.getPartitions(n)` (**partially supported**; uses REST `partitionQuery`)
-- Realtime: `Query.onSnapshot(...)` (**partially supported**; uses WebChannel `Listen` and refreshes via REST `get()`)
+- Realtime: `Query.onSnapshot(...)` (**supported**; incremental WebChannel `Listen` watch processing)
 
 ### Snapshots
 

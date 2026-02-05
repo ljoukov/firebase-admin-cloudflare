@@ -11,8 +11,10 @@ import { FirestoreApiError, FirestoreRestClient } from './rest/client.js';
 import type { BatchGetDocumentsResponse, CommitResponse, FirestoreDocument } from './rest/types.js';
 import { fromFirestoreValue } from './rest/value.js';
 import { listenToDocument, listenToQuery } from './listen/listen.js';
+import { Bytes } from './bytes.js';
 import { FieldPath } from './field-path.js';
 import { Filter, type FilterNode } from './filter.js';
+import { GeoPoint } from './geo-point.js';
 import { Timestamp } from './timestamp.js';
 
 const FIRESTORE_SCOPE = 'https://www.googleapis.com/auth/datastore';
@@ -217,6 +219,271 @@ function computeDocChanges<T extends DocumentData>(
 	}
 
 	return changes;
+}
+
+function parseFieldPathSegments(fieldPath: string): string[] {
+	const input = fieldPath.trim();
+	if (input.length === 0) {
+		return [];
+	}
+
+	const segments: string[] = [];
+	let i = 0;
+
+	while (i < input.length) {
+		if (input[i] === '.') {
+			i += 1;
+			continue;
+		}
+
+		let segment = '';
+
+		if (input[i] === '`') {
+			i += 1;
+			while (i < input.length) {
+				const ch = input[i];
+				if (ch === '`') {
+					i += 1;
+					break;
+				}
+				if (ch === '\\') {
+					i += 1;
+					if (i >= input.length) {
+						break;
+					}
+					segment += input[i];
+					i += 1;
+					continue;
+				}
+				segment += ch;
+				i += 1;
+			}
+		} else {
+			while (i < input.length && input[i] !== '.') {
+				segment += input[i];
+				i += 1;
+			}
+		}
+
+		if (segment.length > 0) {
+			segments.push(segment);
+		}
+	}
+
+	return segments;
+}
+
+function getValueAtPath(source: unknown, segments: string[]): unknown {
+	let cursor: unknown = source;
+	for (const segment of segments) {
+		if (!cursor || typeof cursor !== 'object') {
+			return null;
+		}
+		if (!Object.prototype.hasOwnProperty.call(cursor, segment)) {
+			return null;
+		}
+		cursor = (cursor as Record<string, unknown>)[segment];
+	}
+	return cursor === undefined ? null : cursor;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		(value.constructor === Object || Object.getPrototypeOf(value) === null)
+	);
+}
+
+function orderRank(value: unknown): number {
+	if (value === null || value === undefined) {
+		return 0;
+	}
+	if (typeof value === 'boolean') {
+		return 1;
+	}
+	if (typeof value === 'number') {
+		return 2;
+	}
+	if (value instanceof Timestamp) {
+		return 3;
+	}
+	if (typeof value === 'string') {
+		return 4;
+	}
+	if (value instanceof Bytes) {
+		return 5;
+	}
+	if (value instanceof DocumentReference) {
+		return 6;
+	}
+	if (value instanceof GeoPoint) {
+		return 7;
+	}
+	if (Array.isArray(value)) {
+		return 8;
+	}
+	if (isPlainObject(value)) {
+		return 9;
+	}
+	return 10;
+}
+
+function compareBytes(a: Bytes, b: Bytes): number {
+	const aBytes = a.toUint8Array();
+	const bBytes = b.toUint8Array();
+	const n = Math.min(aBytes.length, bBytes.length);
+	for (let i = 0; i < n; i += 1) {
+		const diff = aBytes[i] - bBytes[i];
+		if (diff !== 0) {
+			return diff < 0 ? -1 : 1;
+		}
+	}
+	if (aBytes.length === bBytes.length) {
+		return 0;
+	}
+	return aBytes.length < bBytes.length ? -1 : 1;
+}
+
+function compareTimestamps(a: Timestamp, b: Timestamp): number {
+	if (a.seconds !== b.seconds) {
+		return a.seconds < b.seconds ? -1 : 1;
+	}
+	if (a.nanoseconds !== b.nanoseconds) {
+		return a.nanoseconds < b.nanoseconds ? -1 : 1;
+	}
+	return 0;
+}
+
+function compareStrings(a: string, b: string): number {
+	if (a === b) {
+		return 0;
+	}
+	return a < b ? -1 : 1;
+}
+
+function compareFirestoreValues(aRaw: unknown, bRaw: unknown): number {
+	const a = aRaw === undefined ? null : aRaw;
+	const b = bRaw === undefined ? null : bRaw;
+
+	const aRank = orderRank(a);
+	const bRank = orderRank(b);
+	if (aRank !== bRank) {
+		return aRank < bRank ? -1 : 1;
+	}
+
+	if (aRank === 0) {
+		return 0;
+	}
+	if (aRank === 1) {
+		return a === b ? 0 : a === false ? -1 : 1;
+	}
+	if (aRank === 2) {
+		const aNum = a as number;
+		const bNum = b as number;
+		const aNaN = Number.isNaN(aNum);
+		const bNaN = Number.isNaN(bNum);
+		if (aNaN && bNaN) {
+			return 0;
+		}
+		if (aNaN) {
+			return -1;
+		}
+		if (bNaN) {
+			return 1;
+		}
+		if (aNum === bNum) {
+			return 0;
+		}
+		return aNum < bNum ? -1 : 1;
+	}
+	if (aRank === 3) {
+		return compareTimestamps(a as Timestamp, b as Timestamp);
+	}
+	if (aRank === 4) {
+		return compareStrings(a as string, b as string);
+	}
+	if (aRank === 5) {
+		return compareBytes(a as Bytes, b as Bytes);
+	}
+	if (aRank === 6) {
+		return compareStrings((a as DocumentReference).path, (b as DocumentReference).path);
+	}
+	if (aRank === 7) {
+		const aGeo = a as GeoPoint;
+		const bGeo = b as GeoPoint;
+		if (aGeo.latitude !== bGeo.latitude) {
+			return aGeo.latitude < bGeo.latitude ? -1 : 1;
+		}
+		if (aGeo.longitude !== bGeo.longitude) {
+			return aGeo.longitude < bGeo.longitude ? -1 : 1;
+		}
+		return 0;
+	}
+	if (aRank === 8) {
+		const aArr = a as unknown[];
+		const bArr = b as unknown[];
+		const n = Math.min(aArr.length, bArr.length);
+		for (let i = 0; i < n; i += 1) {
+			const cmp = compareFirestoreValues(aArr[i], bArr[i]);
+			if (cmp !== 0) {
+				return cmp;
+			}
+		}
+		if (aArr.length === bArr.length) {
+			return 0;
+		}
+		return aArr.length < bArr.length ? -1 : 1;
+	}
+	if (aRank === 9) {
+		const aObj = a as Record<string, unknown>;
+		const bObj = b as Record<string, unknown>;
+		const aKeys = Object.keys(aObj).sort();
+		const bKeys = Object.keys(bObj).sort();
+		const n = Math.min(aKeys.length, bKeys.length);
+		for (let i = 0; i < n; i += 1) {
+			const keyCmp = compareStrings(aKeys[i], bKeys[i]);
+			if (keyCmp !== 0) {
+				return keyCmp;
+			}
+			const cmp = compareFirestoreValues(aObj[aKeys[i]], bObj[bKeys[i]]);
+			if (cmp !== 0) {
+				return cmp;
+			}
+		}
+		if (aKeys.length === bKeys.length) {
+			return 0;
+		}
+		return aKeys.length < bKeys.length ? -1 : 1;
+	}
+
+	const aTag = Object.prototype.toString.call(a);
+	const bTag = Object.prototype.toString.call(b);
+	return compareStrings(aTag, bTag);
+}
+
+function compareQueryDocs<T extends DocumentData>(
+	a: QueryDocumentSnapshot<T>,
+	b: QueryDocumentSnapshot<T>,
+	orderBy: Array<{ fieldPath: string; direction: OrderDirection; segments: string[] | null }>
+): number {
+	for (const clause of orderBy) {
+		const aValue =
+			clause.fieldPath === '__name__'
+				? a.ref
+				: getValueAtPath(a.data() as unknown, clause.segments ?? []);
+		const bValue =
+			clause.fieldPath === '__name__'
+				? b.ref
+				: getValueAtPath(b.data() as unknown, clause.segments ?? []);
+
+		const cmp = compareFirestoreValues(aValue, bValue);
+		if (cmp === 0) {
+			continue;
+		}
+		return clause.direction === 'desc' ? -cmp : cmp;
+	}
+	return 0;
 }
 
 export class QuerySnapshot<T extends DocumentData = DocumentData> {
@@ -1025,6 +1292,7 @@ export class Query<T extends DocumentData = DocumentData> {
 		parentResourceName: string;
 		structuredQuery: unknown;
 		shouldReverse: boolean;
+		orderByForQuery: Array<{ fieldPath: string; direction: OrderDirection }>;
 	} {
 		const validated = RelativeCollectionPathSchema.parse(this.collectionPath);
 		const segments = validated.split('/').filter(Boolean);
@@ -1148,7 +1416,7 @@ export class Query<T extends DocumentData = DocumentData> {
 			endAt: endAtForQuery
 		});
 
-		return { rest, parentResourceName, structuredQuery, shouldReverse };
+		return { rest, parentResourceName, structuredQuery, shouldReverse, orderByForQuery };
 	}
 
 	async get(): Promise<QuerySnapshot<T>> {
@@ -1211,49 +1479,179 @@ export class Query<T extends DocumentData = DocumentData> {
 		let unsubscribe: (() => void) | null = null;
 		let cancelled = false;
 		let lastSnapshot: QuerySnapshot<T> | null = null;
-		let refreshing = false;
-		let refreshQueued = false;
 
-		const refresh = async () => {
-			if (cancelled) {
+		const { rest, parentResourceName, structuredQuery, shouldReverse, orderByForQuery } =
+			this._buildStructuredQueryRequest();
+		const databaseResourceName = rest.databaseResourceName();
+
+		let orderBy =
+			orderByForQuery.length > 0
+				? orderByForQuery
+				: [{ fieldPath: '__name__', direction: 'asc' as const }];
+		if (orderBy.length > 0 && !orderBy.some((entry) => entry.fieldPath === '__name__')) {
+			const tailDir = orderBy.at(-1)?.direction ?? 'asc';
+			orderBy = [...orderBy, { fieldPath: '__name__', direction: tailDir }];
+		}
+		const orderByParsed = orderBy.map((entry) => ({
+			fieldPath: entry.fieldPath,
+			direction: entry.direction,
+			segments: entry.fieldPath === '__name__' ? null : parseFieldPathSegments(entry.fieldPath)
+		}));
+
+		const docsByPath = new Map<string, QueryDocumentSnapshot<T>>();
+		let hasCurrent = false;
+		let pendingChanges = false;
+		let emitTimer: ReturnType<typeof setTimeout> | null = null;
+
+		const emitSnapshot = () => {
+			if (cancelled || !hasCurrent || !pendingChanges) {
 				return;
 			}
-			if (refreshing) {
-				refreshQueued = true;
-				return;
+			pendingChanges = false;
+			if (emitTimer) {
+				clearTimeout(emitTimer);
+				emitTimer = null;
 			}
-			refreshing = true;
-			try {
-				const latest = await this.get();
-				const snapshot =
-					lastSnapshot === null
-						? latest
-						: new QuerySnapshot<T>(latest.docs, {
-								changes: computeDocChanges(lastSnapshot, latest.docs)
-							});
-				lastSnapshot = snapshot;
-				onNext(snapshot);
-			} catch (error) {
-				onError?.(error);
-			} finally {
-				refreshing = false;
-				if (refreshQueued) {
-					refreshQueued = false;
-					void refresh();
-				}
+
+			const docs = [...docsByPath.values()];
+			docs.sort((a, b) => compareQueryDocs(a, b, orderByParsed));
+			if (shouldReverse) {
+				docs.reverse();
 			}
+
+			const snapshot =
+				lastSnapshot === null
+					? new QuerySnapshot<T>(
+							docs,
+							{
+								changes: docs.map((doc, index) => ({
+									type: 'added' as const,
+									doc,
+									oldIndex: -1,
+									newIndex: index
+								}))
+							}
+						)
+					: new QuerySnapshot<T>(docs, { changes: computeDocChanges(lastSnapshot, docs) });
+			lastSnapshot = snapshot;
+			onNext(snapshot);
 		};
 
-		void refresh();
+		const scheduleEmit = () => {
+			if (cancelled || !hasCurrent || !pendingChanges || emitTimer) {
+				return;
+			}
+			emitTimer = setTimeout(() => {
+				emitTimer = null;
+				emitSnapshot();
+			}, 0);
+		};
 
-		const { parentResourceName, structuredQuery } = this._buildStructuredQueryRequest();
+		const upsertDocument = (doc: FirestoreDocument) => {
+			const docPath = decodeDocumentPathFromName(doc.name, databaseResourceName);
+			const ref = new DocumentReference<T>({ firestore: this.firestore, path: docPath });
+			docsByPath.set(
+				docPath,
+				new QueryDocumentSnapshot<T>({
+					ref,
+					data: decodeDocumentData(doc, this.firestore) as T,
+					createTime: parseTimestampOrNull(doc.createTime),
+					updateTime: parseTimestampOrNull(doc.updateTime)
+				})
+			);
+			pendingChanges = true;
+		};
+
+		const removeDocument = (resourceName: string) => {
+			const docPath = decodeDocumentPathFromName(resourceName, databaseResourceName);
+			if (docsByPath.delete(docPath)) {
+				pendingChanges = true;
+			}
+		};
 
 		void listenToQuery({
 			firestore: this.firestore,
 			parentResourceName,
 			structuredQuery,
-			onNext() {
-				void refresh();
+			onMessage: (message) => {
+				if (cancelled) {
+					return;
+				}
+
+				const targetId = 1;
+
+				if ('targetChange' in message) {
+					const change = message.targetChange;
+					const type = change.targetChangeType ?? null;
+
+					if (type === 'RESET') {
+						docsByPath.clear();
+						hasCurrent = false;
+						pendingChanges = true;
+						return;
+					}
+
+					if (type === 'CURRENT') {
+						hasCurrent = true;
+						pendingChanges = true;
+						emitSnapshot();
+						return;
+					}
+
+					if (type === 'NO_CHANGE') {
+						emitSnapshot();
+						return;
+					}
+
+					return;
+				}
+
+				if ('documentChange' in message) {
+					const change = message.documentChange;
+					const targetIds = change.targetIds ?? [];
+					const removedTargetIds = change.removedTargetIds ?? [];
+					const added = targetIds.includes(targetId);
+					const removed = removedTargetIds.includes(targetId);
+
+					if (added) {
+						upsertDocument(change.document);
+					} else if (removed) {
+						removeDocument(change.document.name);
+					}
+
+					scheduleEmit();
+					return;
+				}
+
+				if ('documentDelete' in message) {
+					const removedTargetIds = message.documentDelete.removedTargetIds ?? [];
+					if (removedTargetIds.includes(targetId)) {
+						removeDocument(message.documentDelete.document);
+						scheduleEmit();
+					}
+					return;
+				}
+
+				if ('documentRemove' in message) {
+					const removedTargetIds = message.documentRemove.removedTargetIds ?? [];
+					if (removedTargetIds.includes(targetId)) {
+						removeDocument(message.documentRemove.document);
+						scheduleEmit();
+					}
+					return;
+				}
+
+				if ('filter' in message) {
+					const filter = message.filter;
+					if (filter.targetId !== targetId || typeof filter.count !== 'number') {
+						return;
+					}
+					if (hasCurrent && filter.count !== docsByPath.size) {
+						docsByPath.clear();
+						hasCurrent = false;
+						pendingChanges = true;
+					}
+				}
 			},
 			onError
 		})
@@ -1269,6 +1667,10 @@ export class Query<T extends DocumentData = DocumentData> {
 
 		return () => {
 			cancelled = true;
+			if (emitTimer) {
+				clearTimeout(emitTimer);
+				emitTimer = null;
+			}
 			unsubscribe?.();
 		};
 	}

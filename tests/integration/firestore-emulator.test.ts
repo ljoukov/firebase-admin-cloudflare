@@ -178,4 +178,61 @@ describeEmulator('Firestore emulator integration', () => {
 			unsubscribe();
 		}
 	});
+
+	it('receives query onSnapshot updates (incremental listen)', async () => {
+		const firestore = createFirestore();
+		const col = firestore.collection(`it-${uniqueId()}`);
+
+		await col.doc('a').set({ n: 1, tag: 'x' });
+		await col.doc('b').set({ n: 2, tag: 'x' });
+		await col.doc('c').set({ n: 3, tag: 'y' });
+
+		let latestIds: string[] = [];
+		let rejectListenError: (error: Error) => void = () => {};
+		const listenErrorPromise: Promise<never> = new Promise((_, reject) => {
+			rejectListenError = (error: Error) => {
+				reject(error);
+			};
+		});
+
+		const q = col.where('tag', '==', 'x').orderBy('n', 'asc');
+		const unsubscribe = q.onSnapshot(
+			(snapshot) => {
+				latestIds = snapshot.docs.map((doc) => doc.id);
+			},
+			(error) => {
+				rejectListenError(error instanceof Error ? error : new Error(String(error)));
+			}
+		);
+
+		try {
+			await Promise.race([
+				waitForCondition(() => latestIds.join(',') === 'a,b', { timeoutMs: 15_000 }),
+				listenErrorPromise
+			]);
+
+			await col.doc('d').set({ n: 0, tag: 'x' });
+
+			await Promise.race([
+				waitForCondition(() => latestIds.join(',') === 'd,a,b', { timeoutMs: 15_000 }),
+				listenErrorPromise
+			]);
+
+			await col.doc('a').update({ n: 5 });
+
+			await Promise.race([
+				waitForCondition(() => latestIds.join(',') === 'd,b,a', { timeoutMs: 15_000 }),
+				listenErrorPromise
+			]);
+
+			await col.doc('b').update({ tag: 'y' });
+
+			await Promise.race([
+				waitForCondition(() => latestIds.join(',') === 'd,a', { timeoutMs: 15_000 }),
+				listenErrorPromise
+			]);
+		} finally {
+			unsubscribe();
+		}
+	});
 });
