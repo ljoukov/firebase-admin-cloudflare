@@ -21,67 +21,93 @@ Support levels used below:
 
 ### Initialization
 
-- `initializeApp({ credential: cert(serviceAccount), ... })` via `@ljoukov/firebase-admin-cloudflare/app`
-- `getFirestore(app?)` via `@ljoukov/firebase-admin-cloudflare/firestore`
+- `initializeApp({ credential: cert(serviceAccount), ... })` via `@ljoukov/firebase-admin-cloudflare/app` (**supported**)
+- `getFirestore(app?)` via `@ljoukov/firebase-admin-cloudflare/firestore` (**supported**)
 
 Deviation vs `firebase-admin`: Cloudflare Workers can’t read local JSON files, so examples typically pass the service
 account JSON string via an environment variable (e.g. `GOOGLE_SERVICE_ACCOUNT_JSON`) and parse it in the Worker.
 
 ### Firestore
 
-- `firestore.collection(path)`
-- `firestore.doc(path)`
-- `firestore.collectionGroup(collectionId)` (implemented via StructuredQuery `allDescendants`)
-- `firestore.batch()`
-- `firestore.runTransaction(fn, { maxAttempts? })`
-- `firestore.getAll(...docRefs)` (uses REST `documents:batchGet`)
-- `firestore.listCollections()` (uses REST `listCollectionIds`)
-- `firestore.settings({ ignoreUndefinedProperties })`
+- `firestore.settings({ ignoreUndefinedProperties })` (**supported**)
+- `firestore.collection(path)` (**supported**)
+- `firestore.doc(path)` (**supported**)
+- `firestore.collectionGroup(collectionId)` (**supported**; implemented via StructuredQuery `allDescendants`)
+- `firestore.batch()` (**supported**)
+- `firestore.bulkWriter(options?)` (**partially supported**; `throttling` options are currently ignored)
+- `firestore.bundle(bundleId?)` (**not supported**; `build()` throws)
+- `firestore.runTransaction(fn, { maxAttempts? })` (**supported**)
+- `firestore.getAll(...docRefs)` (**supported**; uses REST `documents:batchGet`)
+- `firestore.listCollections()` (**supported**; uses REST `listCollectionIds`)
 
 ### DocumentReference
 
-- `get()`
-- `create(data)`
-- `set(data, { merge?, mergeFields? })`
-- `update(data)` and `update(field, value, ...pairs)`
-- `delete()`
-- `collection(path)`
-- `listCollections()` (uses REST `listCollectionIds`)
-- `onSnapshot(onNext, onError?)` (document listeners only; via WebChannel `Listen`)
+- Properties: `id`, `path`, `parent`, `firestore` (**supported**)
+- `get()` (**supported**)
+- `create(data)` (**supported**)
+- `set(data, { merge?, mergeFields? })` (**supported**)
+- `update(data)` and `update(field, value, ...pairs)` (**supported**)
+- `delete()` (**supported**)
+- `collection(path)` (**supported**)
+- `listCollections()` (**supported**; uses REST `listCollectionIds`)
+- `onSnapshot(onNext, onError?)` (**supported**; document listeners only, via WebChannel `Listen`)
 
 Note: write methods return a `WriteResult` (with `writeTime`), matching the Admin SDK shape.
 
-### CollectionReference / Query
+### CollectionReference
 
-- `CollectionReference.add(data)`
-- `CollectionReference.listDocuments({ pageSize? })` (uses REST `listDocuments`)
-- `Query.where(fieldPath, op, value)` (common ops include: `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`,
+- Properties: `id`, `path`, `parent`, `firestore` (**supported**)
+- `CollectionReference.doc(documentId)` (**partially supported**; requires explicit `documentId` string)
+- `CollectionReference.add(data)` (**supported**)
+- `CollectionReference.listDocuments({ pageSize? })` (**supported**; uses REST `listDocuments`)
+
+### Query
+
+- `Query.where(fieldPath, op, value)` (**supported**; common ops include: `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`,
   `not-in`, `array-contains`, `array-contains-any`)
-- Composite filters: `Filter.where`, `Filter.or`, `Filter.and`, `Query.where(filter)`
-- `Query.orderBy(fieldPath, direction)`
-- Query cursors: `startAt`, `startAfter`, `endAt`, `endBefore`
-- `Query.limit(n)` and `Query.limitToLast(n)` (implemented by reversing the query order)
-- `Query.offset(n)`
-- `Query.select(...fieldPaths)`
-- `Query.get()`
-- Aggregations: `Query.count()`, `Query.aggregate({...}).get()` (uses REST `runAggregationQuery`)
+- Composite filters: `Filter.where`, `Filter.or`, `Filter.and`, `Query.where(filter)` (**supported**)
+- `Query.orderBy(fieldPath, direction)` (**supported**)
+- Query cursors: `startAt`, `startAfter`, `endAt`, `endBefore` (**supported**)
+- `Query.limit(n)` and `Query.limitToLast(n)` (**supported**; implemented by reversing the query order)
+- `Query.offset(n)` (**supported**)
+- `Query.select(...fieldPaths)` (**supported**)
+- `Query.get()` (**supported**)
+- Aggregations: `Query.count()`, `Query.aggregate({...}).get()` (**supported**; uses REST `runAggregationQuery`)
 - Partition queries: `Query.getPartitions(n)` (**partially supported**; uses REST `partitionQuery`)
 - Realtime: `Query.onSnapshot(...)` (**supported**; incremental WebChannel `Listen` watch processing)
+
+### QueryPartition
+
+- `QueryPartition.startAt`, `QueryPartition.endBefore`, `QueryPartition.toQuery()` (**supported**)
+
+### AggregateQuerySnapshot
+
+- `AggregateQuerySnapshot.data()`, `AggregateQuerySnapshot.readTime` (**supported**)
 
 ### Snapshots
 
 - `DocumentSnapshot`: `exists`, `ref`, `id`, `data()`, `get(fieldPath)`, `createTime`, `updateTime`, `readTime`,
-  `metadata`
-- `QuerySnapshot`: `docs`, `empty`, `size`, `forEach(cb)`, `docChanges()`, `metadata`
+  `metadata` (**supported**)
+- `QueryDocumentSnapshot`: `data()` always returns data (**supported**)
+- `QuerySnapshot`: `docs`, `empty`, `size`, `forEach(cb)`, `docChanges()`, `metadata` (**supported**)
+- `SnapshotMetadata.isEqual()` (**supported**)
 
 Note: snapshot metadata is always `{ fromCache: false, hasPendingWrites: false }` (server reads).
 
 ### FieldPath / FieldValue
 
-- `FieldPath` and `FieldPath.documentId()`
+- `FieldPath` and `FieldPath.documentId()` (**supported**)
 - `FieldValue.delete()`, `serverTimestamp()`, `arrayUnion()`, `arrayRemove()`, `increment()`, `maximum()`, `minimum()`
-- `Bytes` and `GeoPoint` value types
-- `DocumentReference` stored as a value (encoded/decoded as `referenceValue`)
+  (**supported**)
+- `Bytes` and `GeoPoint` value types (**supported**)
+- `DocumentReference` stored as a value (**supported**; encoded/decoded as `referenceValue`)
+
+### WriteBatch / Transaction / BulkWriter
+
+- `WriteBatch`: `create()`, `set()`, `update()`, `delete()`, `commit()` (**supported**)
+- `Transaction`: `get()`, `create()`, `set()`, `update()`, `delete()`, `commit()` (**supported**)
+- `BulkWriter`: `create()`, `set()`, `update()`, `delete()`, `flush()`, `close()`, `onWriteResult()`, `onWriteError()`
+  (**supported**)
 
 ## Supported (client-style wrappers)
 
@@ -103,7 +129,6 @@ offline cache.
 
 ## Not supported (yet)
 
-The Admin SDK surface is large (it re-exports most of `@google-cloud/firestore`). Notable gaps include:
-
 - Bundles (`firestore.bundle(...).build()`) (method exists but `build()` throws)
 - Streaming `Write` / gRPC-only APIs (Workers limitation)
+- Converters (`withConverter(...)` APIs)
