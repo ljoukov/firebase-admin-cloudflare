@@ -32,20 +32,39 @@ npm i @ljoukov/firebase-admin-cloudflare
 
 ### Initialize
 
+This library does **not** auto-detect credentials from the environment. Even if you store your key in
+`GOOGLE_SERVICE_ACCOUNT_JSON`, you still need to pass a credential to `initializeApp()`.
+
+**Recommended:** store the downloaded service account key JSON in `GOOGLE_SERVICE_ACCOUNT_JSON` and map it to `cert()`:
+
 ```ts
 import { cert, initializeApp } from '@ljoukov/firebase-admin-cloudflare/app';
 import { FieldValue, getFirestore } from '@ljoukov/firebase-admin-cloudflare/firestore';
 
-const app = initializeApp({
-	credential: cert({
-		projectId: 'my-project',
-		clientEmail: 'firebase-adminsdk-…@my-project.iam.gserviceaccount.com',
-		privateKey: '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n'
-	})
-});
+type Env = { GOOGLE_SERVICE_ACCOUNT_JSON: string };
 
-const db = getFirestore(app);
+export function getDb(env: Env) {
+	const sa = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
+
+	const app = initializeApp({
+		credential: cert({
+			projectId: sa.project_id,
+			clientEmail: sa.client_email,
+			privateKey: String(sa.private_key).replace(/\\n/g, '\n')
+		}),
+		projectId: sa.project_id
+	});
+
+	return getFirestore(app);
+}
+
+// Cloudflare Workers: getDb(env)
+// Node/local: getDb({ GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON! })
 ```
+
+The `cert({ projectId, clientEmail, privateKey })` values are the same data found in the service account JSON
+(`project_id`, `client_email`, `private_key`) — the snippet above just shows the recommended way to load them from a
+secret instead of hardcoding.
 
 ### Read / write documents
 
@@ -129,9 +148,31 @@ unsubscribe();
 This library authenticates to Firestore using a **Google service account** and obtains an OAuth2 access token
 with the `https://www.googleapis.com/auth/datastore` scope.
 
+- This project does **not** use Application Default Credentials (ADC) or `GOOGLE_APPLICATION_CREDENTIALS`.
 - Treat your service account JSON / private key as a **server secret**.
 - Never ship it to browsers.
 - In Cloudflare, store it as a **secret** (e.g. `GOOGLE_SERVICE_ACCOUNT_JSON`).
+
+### Where to get `GOOGLE_SERVICE_ACCOUNT_JSON`
+
+`GOOGLE_SERVICE_ACCOUNT_JSON` should contain the **contents of a service account key JSON file** (not a file path).
+You can generate/download one from:
+
+- **Firebase Console:** your project → ⚙️ Project settings → **Service accounts** → **Generate new private key**
+- **Google Cloud Console:** IAM & Admin → **Service Accounts** → select/create an account → **Keys** → **Add key** →
+  **Create new key** → JSON
+
+Store that JSON as a secret in Cloudflare (recommended):
+
+```bash
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
+```
+
+For local dev with Wrangler `--env-file`, you typically want the JSON on one line. One option:
+
+```bash
+jq -c . < path/to/service-account.json
+```
 
 `GOOGLE_API_KEY` is **not required** and is not used by this project.
 
@@ -165,7 +206,7 @@ There’s a runnable example Worker UI that:
 ### Run locally (workerd runtime + real Firestore)
 
 1. Create `.env.local` at the repo root:
-   - `GOOGLE_SERVICE_ACCOUNT_JSON` (service account JSON as a single string)
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` (service account key JSON as a single string — see “Where to get `GOOGLE_SERVICE_ACCOUNT_JSON`”)
 
 2. Start the example worker:
 
