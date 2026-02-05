@@ -15,7 +15,7 @@ This project is **not** an official Google/Firebase SDK.
 
 ## Status
 
-Early / work-in-progress, but usable for the subset implemented (see below). Expect breaking changes until `1.0.0`.
+- Stable for the subset of official Firestore JavaScript API.
 
 ## Why this exists
 
