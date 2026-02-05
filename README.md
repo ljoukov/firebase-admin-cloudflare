@@ -136,7 +136,32 @@ There’s a runnable example Worker UI that:
 - Uses a Firestore document listener to stop the loop immediately when the UI writes `command=stop` to
   `firebase-admin-cloudflare/control`
 
-See `examples/README.md`.
+### Run locally (workerd runtime + real Firestore)
+
+1. Create `.env.local` at the repo root:
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` (service account JSON as a single string)
+
+2. Start the example worker:
+
+```bash
+npm run example:dev
+```
+
+Then open `http://127.0.0.1:8788/`.
+
+### Deploy to Cloudflare
+
+```bash
+npx wrangler deploy --config examples/worker/wrangler.toml
+```
+
+Then set the service account secret:
+
+```bash
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON --config examples/worker/wrangler.toml
+```
+
+See `examples/README.md` for more context.
 
 ## Dev
 

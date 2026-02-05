@@ -1,6 +1,6 @@
 # Examples
 
-This folder contains Cloudflare Worker examples for `firebase-admin-cloudflare`.
+This folder contains Cloudflare Worker examples for `@ljoukov/firebase-admin-cloudflare`.
 
 ## Worker demo
 
@@ -15,3 +15,10 @@ npm run example:dev
 ```
 
 Then open `http://127.0.0.1:8788/`.
+
+Deploy to Cloudflare:
+
+```bash
+npx wrangler deploy --config examples/worker/wrangler.toml
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON --config examples/worker/wrangler.toml
+```
