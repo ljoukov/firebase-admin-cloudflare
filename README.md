@@ -6,7 +6,7 @@
 [![license](https://img.shields.io/npm/l/@ljoukov/firebase-admin-cloudflare.svg)](./LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/workers/)
 
-Firestore “admin SDK” implementation that works on Cloudflare Workers by using:
+Firestore “admin SDK” implementation that works on **Cloudflare Workers**, **Node.js** (18+), and **Bun** by using:
 
 - **Firestore REST API** for CRUD / queries
 - **Firestore WebChannel** transport for realtime `Listen` streams (document listeners)
@@ -22,6 +22,12 @@ This project is **not** an official Google/Firebase SDK.
 
 The official `firebase-admin` Node SDK relies on **gRPC**, which is not available in Cloudflare Workers. Firestore’s public endpoint does **not** expose gRPC‑web, but it _does_ expose WebChannel for realtime listeners (the same transport the Firebase Web SDK uses).
 
+## Runtime support
+
+- **Cloudflare Workers** (primary target)
+- **Node.js** 18+ (uses built-in `fetch`)
+- **Bun** (uses built-in `fetch`)
+
 ## Install
 
 ```bash
@@ -32,13 +38,48 @@ npm i @ljoukov/firebase-admin-cloudflare
 
 ### Initialize
 
-By default, `initializeApp()` reads credentials from `GOOGLE_SERVICE_ACCOUNT_JSON` (service account key JSON) via a
-global binding (Workers service-worker syntax) or `process.env` (Node).
+#### 1) Get a service account key JSON
+
+You need a **Google service account key JSON** for your Firebase / GCP project (this is what you put into
+`GOOGLE_SERVICE_ACCOUNT_JSON`).
+
+- **Firebase Console:** your project → ⚙️ Project settings → **Service accounts** → **Generate new private key**
+- **Google Cloud Console:** IAM & Admin → **Service Accounts** → select/create an account → **Keys** → **Add key** →
+  **Create new key** → JSON
+
+![Firebase Console: service accounts → generate new private key](https://github.com/user-attachments/assets/9939573e-f2f1-48bc-93ec-b50830d5f0bb)
+
+#### 2) Set `GOOGLE_SERVICE_ACCOUNT_JSON`
+
+`GOOGLE_SERVICE_ACCOUNT_JSON` must be the **contents of the JSON file** (not a file path).
+
+**Cloudflare Workers (recommended):** store it as a Wrangler secret (paste the JSON file contents when prompted):
+
+```bash
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
+```
+
+For local dev with Wrangler `--env-file` (like this repo’s example), you typically want the JSON on one line:
+
+```bash
+jq -c . < path/to/service-account.json
+```
+
+Then copy/paste that output into your `.env.local` as the value of `GOOGLE_SERVICE_ACCOUNT_JSON`.
+
+**Node.js / Bun (one-liner):**
+
+```bash
+export GOOGLE_SERVICE_ACCOUNT_JSON="$(jq -c . < path/to/service-account.json)"
+```
+
+#### 3) Initialize the app
 
 ```ts
 import { initializeApp } from '@ljoukov/firebase-admin-cloudflare/app';
-import { FieldValue, getFirestore } from '@ljoukov/firebase-admin-cloudflare/firestore';
+import { getFirestore } from '@ljoukov/firebase-admin-cloudflare/firestore';
 
+// Node.js / Bun: reads process.env.GOOGLE_SERVICE_ACCOUNT_JSON
 const app = initializeApp();
 const db = getFirestore(app);
 ```
@@ -67,6 +108,8 @@ const app = initializeApp({
 ### Read / write documents
 
 ```ts
+import { FieldValue } from '@ljoukov/firebase-admin-cloudflare/firestore';
+
 const ref = db.collection('firebase-admin-cloudflare/demo/items').doc('item-1');
 
 await ref.set({
@@ -152,30 +195,6 @@ with the `https://www.googleapis.com/auth/datastore` scope.
 - Never ship it to browsers.
 - In Cloudflare, store it as a **secret** (e.g. `GOOGLE_SERVICE_ACCOUNT_JSON`).
 
-### Where to get `GOOGLE_SERVICE_ACCOUNT_JSON`
-
-`GOOGLE_SERVICE_ACCOUNT_JSON` should contain the **contents of a service account key JSON file** (not a file path).
-You can generate/download one from:
-
-- **Firebase Console:** your project → ⚙️ Project settings → **Service accounts** → **Generate new private key**
-- **Google Cloud Console:** IAM & Admin → **Service Accounts** → select/create an account → **Keys** → **Add key** →
-  **Create new key** → JSON
-
-<img width="932" height="877" alt="image" src="https://github.com/user-attachments/assets/9939573e-f2f1-48bc-93ec-b50830d5f0bb" />
-
-
-Store that JSON as a secret in Cloudflare (recommended):
-
-```bash
-npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
-```
-
-For local dev with Wrangler `--env-file`, you typically want the JSON on one line. One option:
-
-```bash
-jq -c . < path/to/service-account.json
-```
-
 `GOOGLE_API_KEY` is **not required** and is not used by this project.
 
 ## Implemented API (current)
@@ -208,7 +227,7 @@ There’s a runnable example Worker UI that:
 ### Run locally (workerd runtime + real Firestore)
 
 1. Create `.env.local` at the repo root:
-   - `GOOGLE_SERVICE_ACCOUNT_JSON` (service account key JSON as a single string — see “Where to get `GOOGLE_SERVICE_ACCOUNT_JSON`”)
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` (service account key JSON as a single string — see “Usage → Initialize” above)
 
 2. Start the example worker:
 

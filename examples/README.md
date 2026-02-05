@@ -8,6 +8,7 @@ Run locally (real Firestore):
 
 1. Create a `.env.local` at the repo root with:
    - `GOOGLE_SERVICE_ACCOUNT_JSON` (the contents of a service account key JSON file, as a string)
+   - See the repo `README.md` (“Usage → Initialize”) for the step-by-step + screenshot
 
    You can generate/download a service account key JSON from:
    - Firebase Console → Project settings → Service accounts → Generate new private key
