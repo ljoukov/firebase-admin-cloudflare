@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
-import type { FirestoreDocument, RunQueryResponse } from './types.js';
+import type { CommitResponse, FirestoreDocument, RunQueryResponse } from './types.js';
 import {
 	BeginTransactionResponseSchema,
 	CommitResponseSchema,
 	FirestoreDocumentSchema,
+	ListCollectionIdsResponseSchema,
+	ListDocumentsResponseSchema,
 	RunQueryResponseSchema
 } from './types.js';
 
@@ -104,6 +106,16 @@ export class FirestoreRestClient {
 		return `${this.baseUrl}/v1/${this.databaseResourceName()}/documents:commit`;
 	}
 
+	listDocumentsUrl(collectionPath: string): string {
+		const encoded = encodePathForUrl(collectionPath);
+		return `${this.baseUrl}/v1/${this.databaseResourceName()}/documents/${encoded}`;
+	}
+
+	listCollectionIdsUrl(parentResourceName: string): string {
+		const encoded = encodeResourceNameForUrl(parentResourceName);
+		return `${this.baseUrl}/v1/${encoded}:listCollectionIds`;
+	}
+
 	async getDocument(options: {
 		documentPath: string;
 		transaction?: string;
@@ -178,7 +190,7 @@ export class FirestoreRestClient {
 		return BeginTransactionResponseSchema.parse(json).transaction;
 	}
 
-	async commit(options: { writes: unknown[]; transaction?: string }): Promise<void> {
+	async commit(options: { writes: unknown[]; transaction?: string }): Promise<CommitResponse> {
 		const body: Record<string, unknown> = {
 			writes: options.writes
 		};
@@ -196,7 +208,61 @@ export class FirestoreRestClient {
 		}
 
 		const json = await resp.json();
-		CommitResponseSchema.parse(json);
+		return CommitResponseSchema.parse(json);
+	}
+
+	async listDocuments(options: {
+		collectionPath: string;
+		pageSize?: number;
+		pageToken?: string;
+	}): Promise<{ documents: FirestoreDocument[]; nextPageToken: string | null }> {
+		const url = new URL(this.listDocumentsUrl(options.collectionPath));
+		if (options.pageSize !== undefined) {
+			url.searchParams.set('pageSize', String(options.pageSize));
+		}
+		if (options.pageToken) {
+			url.searchParams.set('pageToken', options.pageToken);
+		}
+
+		const resp = await this.authedFetch(url.toString(), { method: 'GET' });
+		if (!resp.ok) {
+			throw await this.toError(resp, 'Firestore listDocuments failed');
+		}
+		const json = await resp.json();
+		const parsed = ListDocumentsResponseSchema.parse(json);
+		return {
+			documents: parsed.documents ?? [],
+			nextPageToken: parsed.nextPageToken ?? null
+		};
+	}
+
+	async listCollectionIds(options: {
+		parentResourceName: string;
+		pageSize?: number;
+		pageToken?: string;
+	}): Promise<{ collectionIds: string[]; nextPageToken: string | null }> {
+		const body: Record<string, unknown> = {};
+		if (options.pageSize !== undefined) {
+			body.pageSize = options.pageSize;
+		}
+		if (options.pageToken) {
+			body.pageToken = options.pageToken;
+		}
+
+		const resp = await this.authedFetch(this.listCollectionIdsUrl(options.parentResourceName), {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!resp.ok) {
+			throw await this.toError(resp, 'Firestore listCollectionIds failed');
+		}
+		const json = await resp.json();
+		const parsed = ListCollectionIdsResponseSchema.parse(json);
+		return {
+			collectionIds: parsed.collectionIds ?? [],
+			nextPageToken: parsed.nextPageToken ?? null
+		};
 	}
 
 	private async authedFetch(input: string, init: RequestInit): Promise<Response> {

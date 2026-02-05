@@ -76,3 +76,19 @@ export const CommitResponseSchema = z.object({
 		)
 		.optional()
 });
+
+export type CommitResponse = z.infer<typeof CommitResponseSchema>;
+
+export const ListDocumentsResponseSchema = z.object({
+	documents: z.array(FirestoreDocumentSchema).optional(),
+	nextPageToken: z.string().optional()
+});
+
+export type ListDocumentsResponse = z.infer<typeof ListDocumentsResponseSchema>;
+
+export const ListCollectionIdsResponseSchema = z.object({
+	collectionIds: z.array(z.string()).optional(),
+	nextPageToken: z.string().optional()
+});
+
+export type ListCollectionIdsResponse = z.infer<typeof ListCollectionIdsResponseSchema>;

@@ -18,5 +18,9 @@ describe('FieldValue', () => {
 		expect(FieldValue.delete()).toBeInstanceOf(FieldValue);
 		expect(FieldValue.serverTimestamp()).toBeInstanceOf(FieldValue);
 		expect(FieldValue.arrayUnion({ a: 1 })).toBeInstanceOf(FieldValue);
+		expect(FieldValue.arrayRemove({ a: 1 })).toBeInstanceOf(FieldValue);
+		expect(FieldValue.increment(1)).toBeInstanceOf(FieldValue);
+		expect(FieldValue.maximum(123)).toBeInstanceOf(FieldValue);
+		expect(FieldValue.minimum(123)).toBeInstanceOf(FieldValue);
 	});
 });

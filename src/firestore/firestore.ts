@@ -8,19 +8,32 @@ import type { EncodedDocumentWrite } from './rest/write-encoding.js';
 import { encodeSetData, encodeUpdateData } from './rest/write-encoding.js';
 import { encodeStructuredQuery, type OrderDirection, type WhereOp } from './rest/query-encoding.js';
 import { FirestoreApiError, FirestoreRestClient } from './rest/client.js';
-import type { FirestoreDocument } from './rest/types.js';
+import type { CommitResponse, FirestoreDocument } from './rest/types.js';
 import { fromFirestoreValue } from './rest/value.js';
 import { listenToDocument } from './listen/listen.js';
+import { FieldPath } from './field-path.js';
+import { Timestamp } from './timestamp.js';
 
 const FIRESTORE_SCOPE = 'https://www.googleapis.com/auth/datastore';
 
 export type DocumentData = Record<string, unknown>;
 
-export type SetOptions = { merge?: boolean };
+export type SetOptions = {
+	merge?: boolean;
+	mergeFields?: Array<string | FieldPath>;
+};
 
 export type TransactionOptions = {
 	maxAttempts?: number;
 };
+
+export class WriteResult {
+	readonly writeTime: Timestamp;
+
+	constructor(writeTime: Timestamp) {
+		this.writeTime = writeTime;
+	}
+}
 
 export type DocumentSnapshotData<T extends DocumentData> = T;
 
@@ -28,11 +41,24 @@ export class DocumentSnapshot<T extends DocumentData = DocumentData> {
 	readonly ref: DocumentReference<T>;
 	readonly exists: boolean;
 	private readonly _data: T | null;
+	private readonly _createTime: Timestamp | null;
+	private readonly _updateTime: Timestamp | null;
+	private readonly _readTime: Timestamp | null;
 
-	constructor(options: { ref: DocumentReference<T>; exists: boolean; data: T | null }) {
+	constructor(options: {
+		ref: DocumentReference<T>;
+		exists: boolean;
+		data: T | null;
+		createTime?: Timestamp | null;
+		updateTime?: Timestamp | null;
+		readTime?: Timestamp | null;
+	}) {
 		this.ref = options.ref;
 		this.exists = options.exists;
 		this._data = options.data;
+		this._createTime = options.createTime ?? null;
+		this._updateTime = options.updateTime ?? null;
+		this._readTime = options.readTime ?? null;
 	}
 
 	get id(): string {
@@ -42,13 +68,59 @@ export class DocumentSnapshot<T extends DocumentData = DocumentData> {
 	data(): DocumentSnapshotData<T> | undefined {
 		return this._data ?? undefined;
 	}
+
+	get createTime(): Timestamp | undefined {
+		return this._createTime ?? undefined;
+	}
+
+	get updateTime(): Timestamp | undefined {
+		return this._updateTime ?? undefined;
+	}
+
+	get readTime(): Timestamp | undefined {
+		return this._readTime ?? undefined;
+	}
+
+	get(fieldPath: string | FieldPath): unknown {
+		if (!this.exists || !this._data) {
+			return undefined;
+		}
+		const segments =
+			typeof fieldPath === 'string'
+				? fieldPath.split('.').filter((segment) => segment.length > 0)
+				: [...fieldPath.segments];
+		let cursor: unknown = this._data;
+		for (const segment of segments) {
+			if (!cursor || typeof cursor !== 'object') {
+				return undefined;
+			}
+			if (!Object.prototype.hasOwnProperty.call(cursor, segment)) {
+				return undefined;
+			}
+			cursor = (cursor as Record<string, unknown>)[segment];
+		}
+		return cursor;
+	}
 }
 
 export class QueryDocumentSnapshot<
 	T extends DocumentData = DocumentData
 > extends DocumentSnapshot<T> {
-	constructor(options: { ref: DocumentReference<T>; data: T }) {
-		super({ ref: options.ref, exists: true, data: options.data });
+	constructor(options: {
+		ref: DocumentReference<T>;
+		data: T;
+		createTime?: Timestamp | null;
+		updateTime?: Timestamp | null;
+		readTime?: Timestamp | null;
+	}) {
+		super({
+			ref: options.ref,
+			exists: true,
+			data: options.data,
+			createTime: options.createTime,
+			updateTime: options.updateTime,
+			readTime: options.readTime
+		});
 	}
 
 	override data(): DocumentSnapshotData<T> {
@@ -69,6 +141,12 @@ export class QuerySnapshot<T extends DocumentData = DocumentData> {
 
 	get size(): number {
 		return this.docs.length;
+	}
+
+	forEach(callback: (snapshot: QueryDocumentSnapshot<T>) => void): void {
+		for (const doc of this.docs) {
+			callback(doc);
+		}
 	}
 }
 
@@ -94,8 +172,37 @@ function joinPath(base: string, suffix: string): string {
 	return `${base.replace(/\/+$/g, '')}/${suffix.replace(/^\/+/g, '')}`;
 }
 
+const AUTO_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+function autoId(length = 20): string {
+	const bytes = new Uint8Array(length);
+	try {
+		globalThis.crypto.getRandomValues(bytes);
+	} catch {
+		for (let i = 0; i < bytes.length; i += 1) {
+			bytes[i] = Math.floor(Math.random() * 256);
+		}
+	}
+	let out = '';
+	for (const byte of bytes) {
+		out += AUTO_ID_CHARS[byte % AUTO_ID_CHARS.length];
+	}
+	return out;
+}
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseTimestampOrNull(value: string | undefined): Timestamp | null {
+	if (!value) {
+		return null;
+	}
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) {
+		return null;
+	}
+	return Timestamp.fromDate(date);
 }
 
 function decodeDocumentData(doc: FirestoreDocument): DocumentData {
@@ -122,6 +229,7 @@ export class Firestore {
 	private readonly projectId: string;
 	private readonly baseUrl: string;
 	private readonly accessTokenProvider: () => Promise<string | null>;
+	private ignoreUndefinedProperties = false;
 
 	constructor(options: { app: App; baseUrl?: string }) {
 		const serviceAccount = options.app.options.credential.getServiceAccount();
@@ -152,11 +260,29 @@ export class Firestore {
 		});
 	}
 
+	settings(options: { ignoreUndefinedProperties?: boolean }): void {
+		if (typeof options.ignoreUndefinedProperties === 'boolean') {
+			this.ignoreUndefinedProperties = options.ignoreUndefinedProperties;
+		}
+	}
+
 	collection<T extends DocumentData = DocumentData>(
 		collectionPath: string
 	): CollectionReference<T> {
 		const validated = RelativeCollectionPathSchema.parse(collectionPath);
 		return new CollectionReference<T>({ firestore: this, path: validated });
+	}
+
+	collectionGroup<T extends DocumentData = DocumentData>(collectionId: string): Query<T> {
+		const id = z
+			.string()
+			.trim()
+			.min(1)
+			.refine((value) => !value.includes('/'), {
+				message: 'Collection group must be a collection id.'
+			})
+			.parse(collectionId);
+		return new Query<T>({ firestore: this, collectionPath: id, allDescendants: true });
 	}
 
 	doc<T extends DocumentData = DocumentData>(documentPath: string): DocumentReference<T> {
@@ -166,6 +292,19 @@ export class Firestore {
 
 	batch(): WriteBatch {
 		return new WriteBatch(this);
+	}
+
+	async getAll<T extends DocumentData>(
+		...refs: Array<DocumentReference<T>>
+	): Promise<Array<DocumentSnapshot<T>>> {
+		return await Promise.all(refs.map((ref) => ref.get()));
+	}
+
+	async listCollections(): Promise<Array<CollectionReference>> {
+		const rest = this._getRestClient();
+		const parentResourceName = `${rest.databaseResourceName()}/documents`;
+		const { collectionIds } = await rest.listCollectionIds({ parentResourceName });
+		return collectionIds.map((id) => this.collection(id));
 	}
 
 	async runTransaction<T>(
@@ -223,6 +362,10 @@ export class Firestore {
 	async _getAccessToken(): Promise<string | null> {
 		return await this.accessTokenProvider();
 	}
+
+	_ignoreUndefinedProperties(): boolean {
+		return this.ignoreUndefinedProperties;
+	}
 }
 
 export class DocumentReference<T extends DocumentData = DocumentData> {
@@ -264,21 +407,84 @@ export class DocumentReference<T extends DocumentData = DocumentData> {
 		if (!doc) {
 			return new DocumentSnapshot<T>({ ref: this, exists: false, data: null });
 		}
-		return new DocumentSnapshot<T>({ ref: this, exists: true, data: decodeDocumentData(doc) as T });
+		return new DocumentSnapshot<T>({
+			ref: this,
+			exists: true,
+			data: decodeDocumentData(doc) as T,
+			createTime: parseTimestampOrNull(doc.createTime),
+			updateTime: parseTimestampOrNull(doc.updateTime)
+		});
 	}
 
-	async set(data: T, options: SetOptions = {}): Promise<void> {
-		const encoded = encodeSetData({ data, merge: options.merge ?? false });
-		await this.writeUpdate(encoded, { requireExists: false });
+	async create(data: T): Promise<WriteResult> {
+		const encoded = encodeSetData({
+			data,
+			merge: false,
+			ignoreUndefinedProperties: this.firestore._ignoreUndefinedProperties()
+		});
+		return await this.writeUpdate(encoded, { precondition: 'not-exists' });
 	}
 
-	async update(data: Record<string, unknown>): Promise<void> {
-		const encoded = encodeUpdateData({ data });
-		await this.writeUpdate(encoded, { requireExists: true });
+	async set(data: T, options: SetOptions = {}): Promise<WriteResult> {
+		const encoded = encodeSetData({
+			data,
+			merge: options.merge ?? false,
+			mergeFields: options.mergeFields,
+			ignoreUndefinedProperties: this.firestore._ignoreUndefinedProperties()
+		});
+		return await this.writeUpdate(encoded, { precondition: null });
 	}
 
-	async delete(): Promise<void> {
-		await this.firestore._getRestClient().deleteDocument({ documentPath: this.path });
+	async update(data: Record<string, unknown>): Promise<WriteResult>;
+	async update(
+		field: string | FieldPath,
+		value: unknown,
+		...moreFieldsAndValues: unknown[]
+	): Promise<WriteResult>;
+	async update(
+		dataOrField: Record<string, unknown> | string | FieldPath,
+		value?: unknown,
+		...moreFieldsAndValues: unknown[]
+	): Promise<WriteResult> {
+		const ignoreUndefinedProperties = this.firestore._ignoreUndefinedProperties();
+		let data: Record<string, unknown>;
+
+		if (typeof dataOrField === 'string' || dataOrField instanceof FieldPath) {
+			const pairs = [dataOrField, value, ...moreFieldsAndValues];
+			if (pairs.length < 2 || pairs.length % 2 !== 0) {
+				throw new Error('update() requires field/value pairs.');
+			}
+			const out: Record<string, unknown> = {};
+			for (let i = 0; i < pairs.length; i += 2) {
+				const fieldPath = pairs[i];
+				const fieldValue = pairs[i + 1];
+				if (!(typeof fieldPath === 'string' || fieldPath instanceof FieldPath)) {
+					throw new Error('update() field paths must be strings or FieldPath instances.');
+				}
+				const key = fieldPath instanceof FieldPath ? fieldPath.toString() : fieldPath;
+				out[key] = fieldValue;
+			}
+			data = out;
+		} else {
+			data = dataOrField;
+		}
+
+		const encoded = encodeUpdateData({ data, ignoreUndefinedProperties });
+		return await this.writeUpdate(encoded, { precondition: 'exists' });
+	}
+
+	async delete(): Promise<WriteResult> {
+		const rest = this.firestore._getRestClient();
+		const docName = rest.documentResourceName(this.path);
+		const resp = await rest.commit({ writes: [{ delete: docName }] });
+		return writeResultFromCommit(resp, 0);
+	}
+
+	async listCollections(): Promise<Array<CollectionReference>> {
+		const rest = this.firestore._getRestClient();
+		const parentResourceName = rest.documentResourceName(this.path);
+		const { collectionIds } = await rest.listCollectionIds({ parentResourceName });
+		return collectionIds.map((id) => this.collection(id));
 	}
 
 	onSnapshot(
@@ -320,36 +526,27 @@ export class DocumentReference<T extends DocumentData = DocumentData> {
 
 	private async writeUpdate(
 		encoded: EncodedDocumentWrite,
-		options: { requireExists: boolean }
-	): Promise<void> {
+		options: { precondition: 'exists' | 'not-exists' | null }
+	): Promise<WriteResult> {
 		const rest = this.firestore._getRestClient();
-		const docName = rest.documentResourceName(this.path);
-
-		const write: Record<string, unknown> = {
-			update: {
-				name: docName,
-				fields: encoded.fields
-			}
-		};
-		if (encoded.updateMaskFieldPaths) {
-			write.updateMask = { fieldPaths: encoded.updateMaskFieldPaths };
-		}
-		if (encoded.updateTransforms) {
-			write.updateTransforms = encoded.updateTransforms;
-		}
-		if (options.requireExists) {
-			write.currentDocument = { exists: true };
-		}
-		await rest.commit({ writes: [write] });
+		const write = buildUpdateWrite(this.firestore, this, encoded, {
+			precondition: options.precondition
+		});
+		const resp = await rest.commit({ writes: [write] });
+		return writeResultFromCommit(resp, 0);
 	}
 }
 
 export class Query<T extends DocumentData = DocumentData> {
-	protected readonly firestore: Firestore;
+	readonly firestore: Firestore;
 	protected readonly collectionPath: string;
 	private readonly whereClauses: Array<{ fieldPath: string; op: WhereOp; value: unknown }>;
 	private readonly orderByClauses: Array<{ fieldPath: string; direction: OrderDirection }>;
 	private readonly limitValue: number | null;
+	private readonly limitToLastValue: boolean;
+	private readonly offsetValue: number | null;
+	private readonly selectFieldPaths: string[] | null;
+	private readonly allDescendants: boolean;
 
 	constructor(options: {
 		firestore: Firestore;
@@ -357,31 +554,49 @@ export class Query<T extends DocumentData = DocumentData> {
 		where?: Array<{ fieldPath: string; op: WhereOp; value: unknown }>;
 		orderBy?: Array<{ fieldPath: string; direction: OrderDirection }>;
 		limit?: number | null;
+		limitToLast?: boolean;
+		offset?: number | null;
+		select?: string[] | null;
+		allDescendants?: boolean;
 	}) {
 		this.firestore = options.firestore;
 		this.collectionPath = options.collectionPath;
 		this.whereClauses = options.where ?? [];
 		this.orderByClauses = options.orderBy ?? [];
 		this.limitValue = options.limit ?? null;
+		this.limitToLastValue = options.limitToLast ?? false;
+		this.offsetValue = options.offset ?? null;
+		this.selectFieldPaths = options.select ?? null;
+		this.allDescendants = options.allDescendants ?? false;
 	}
 
-	where(fieldPath: string, op: WhereOp, value: unknown): Query<T> {
+	where(fieldPath: string | FieldPath, op: WhereOp, value: unknown): Query<T> {
+		const normalized = fieldPath instanceof FieldPath ? fieldPath.toString() : fieldPath;
 		return new Query<T>({
 			firestore: this.firestore,
 			collectionPath: this.collectionPath,
-			where: [...this.whereClauses, { fieldPath, op, value }],
+			where: [...this.whereClauses, { fieldPath: normalized, op, value }],
 			orderBy: this.orderByClauses,
-			limit: this.limitValue
+			limit: this.limitValue,
+			limitToLast: this.limitToLastValue,
+			offset: this.offsetValue,
+			select: this.selectFieldPaths,
+			allDescendants: this.allDescendants
 		});
 	}
 
-	orderBy(fieldPath: string, direction: OrderDirection = 'asc'): Query<T> {
+	orderBy(fieldPath: string | FieldPath, direction: OrderDirection = 'asc'): Query<T> {
+		const normalized = fieldPath instanceof FieldPath ? fieldPath.toString() : fieldPath;
 		return new Query<T>({
 			firestore: this.firestore,
 			collectionPath: this.collectionPath,
 			where: this.whereClauses,
-			orderBy: [...this.orderByClauses, { fieldPath, direction }],
-			limit: this.limitValue
+			orderBy: [...this.orderByClauses, { fieldPath: normalized, direction }],
+			limit: this.limitValue,
+			limitToLast: this.limitToLastValue,
+			offset: this.offsetValue,
+			select: this.selectFieldPaths,
+			allDescendants: this.allDescendants
 		});
 	}
 
@@ -391,7 +606,57 @@ export class Query<T extends DocumentData = DocumentData> {
 			collectionPath: this.collectionPath,
 			where: this.whereClauses,
 			orderBy: this.orderByClauses,
-			limit
+			limit,
+			limitToLast: false,
+			offset: this.offsetValue,
+			select: this.selectFieldPaths,
+			allDescendants: this.allDescendants
+		});
+	}
+
+	limitToLast(limit: number): Query<T> {
+		return new Query<T>({
+			firestore: this.firestore,
+			collectionPath: this.collectionPath,
+			where: this.whereClauses,
+			orderBy: this.orderByClauses,
+			limit,
+			limitToLast: true,
+			offset: this.offsetValue,
+			select: this.selectFieldPaths,
+			allDescendants: this.allDescendants
+		});
+	}
+
+	offset(offset: number): Query<T> {
+		const n = z.number().int().nonnegative().parse(offset);
+		return new Query<T>({
+			firestore: this.firestore,
+			collectionPath: this.collectionPath,
+			where: this.whereClauses,
+			orderBy: this.orderByClauses,
+			limit: this.limitValue,
+			limitToLast: this.limitToLastValue,
+			offset: n,
+			select: this.selectFieldPaths,
+			allDescendants: this.allDescendants
+		});
+	}
+
+	select(...fieldPaths: Array<string | FieldPath>): Query<T> {
+		const normalized = fieldPaths.map((fieldPath) =>
+			fieldPath instanceof FieldPath ? fieldPath.toString() : fieldPath
+		);
+		return new Query<T>({
+			firestore: this.firestore,
+			collectionPath: this.collectionPath,
+			where: this.whereClauses,
+			orderBy: this.orderByClauses,
+			limit: this.limitValue,
+			limitToLast: this.limitToLastValue,
+			offset: this.offsetValue,
+			select: normalized,
+			allDescendants: this.allDescendants
 		});
 	}
 
@@ -405,15 +670,33 @@ export class Query<T extends DocumentData = DocumentData> {
 		const parentPath = segments.slice(0, -1).join('/');
 		const rest = this.firestore._getRestClient();
 
-		const parentResourceName = parentPath
-			? rest.documentResourceName(parentPath)
-			: `${rest.databaseResourceName()}/documents`;
+		const parentResourceName = this.allDescendants
+			? `${rest.databaseResourceName()}/documents`
+			: parentPath
+				? rest.documentResourceName(parentPath)
+				: `${rest.databaseResourceName()}/documents`;
+
+		let orderByClauses = this.orderByClauses;
+		const shouldReverse = this.limitToLastValue && this.limitValue !== null;
+		if (shouldReverse) {
+			if (orderByClauses.length === 0) {
+				orderByClauses = [{ fieldPath: '__name__', direction: 'desc' }];
+			} else {
+				orderByClauses = orderByClauses.map((entry) => ({
+					fieldPath: entry.fieldPath,
+					direction: entry.direction === 'desc' ? 'asc' : 'desc'
+				}));
+			}
+		}
 
 		const structuredQuery = encodeStructuredQuery({
 			collectionId,
+			allDescendants: this.allDescendants,
+			select: this.selectFieldPaths,
 			where: this.whereClauses,
-			orderBy: this.orderByClauses,
-			limit: this.limitValue
+			orderBy: orderByClauses,
+			limit: this.limitValue,
+			offset: this.offsetValue
 		});
 
 		const responses = await rest.runQuery({ parentResourceName, structuredQuery });
@@ -422,14 +705,20 @@ export class Query<T extends DocumentData = DocumentData> {
 			if (!entry.document) {
 				continue;
 			}
-			const docPath = decodeDocumentPathFromName(
-				entry.document.name,
-				this.firestore._getProjectId()
-			);
+			const docPath = decodeDocumentPathFromName(entry.document.name, rest.databaseResourceName());
 			const ref = new DocumentReference<T>({ firestore: this.firestore, path: docPath });
 			docs.push(
-				new QueryDocumentSnapshot<T>({ ref, data: decodeDocumentData(entry.document) as T })
+				new QueryDocumentSnapshot<T>({
+					ref,
+					data: decodeDocumentData(entry.document) as T,
+					createTime: parseTimestampOrNull(entry.document.createTime),
+					updateTime: parseTimestampOrNull(entry.document.updateTime),
+					readTime: parseTimestampOrNull(entry.readTime)
+				})
 			);
+		}
+		if (shouldReverse) {
+			docs.reverse();
 		}
 		return new QuerySnapshot(docs);
 	}
@@ -452,9 +741,36 @@ export class CollectionReference<T extends DocumentData = DocumentData> extends 
 		return id;
 	}
 
+	get parent(): DocumentReference | null {
+		const segments = this.path.split('/').filter(Boolean);
+		if (segments.length <= 1) {
+			return null;
+		}
+		const parentPath = segments.slice(0, -1).join('/');
+		return new DocumentReference({ firestore: this.firestore, path: parentPath });
+	}
+
 	doc(documentId: string): DocumentReference<T> {
 		const id = z.string().trim().min(1).parse(documentId);
 		return new DocumentReference<T>({ firestore: this.firestore, path: joinPath(this.path, id) });
+	}
+
+	async add(data: T): Promise<DocumentReference<T>> {
+		const ref = this.doc(autoId());
+		await ref.create(data);
+		return ref;
+	}
+
+	async listDocuments(options: { pageSize?: number } = {}): Promise<Array<DocumentReference<T>>> {
+		const rest = this.firestore._getRestClient();
+		const { documents } = await rest.listDocuments({
+			collectionPath: this.path,
+			pageSize: options.pageSize
+		});
+		return documents.map((doc) => {
+			const docPath = decodeDocumentPathFromName(doc.name, rest.databaseResourceName());
+			return new DocumentReference<T>({ firestore: this.firestore, path: docPath });
+		});
 	}
 }
 
@@ -466,26 +782,78 @@ export class WriteBatch {
 		this.firestore = firestore;
 	}
 
-	set<T extends DocumentData>(ref: DocumentReference<T>, data: T, options: SetOptions = {}): this {
-		const encoded = encodeSetData({ data, merge: options.merge ?? false });
-		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { requireExists: false }));
+	create<T extends DocumentData>(ref: DocumentReference<T>, data: T): this {
+		const encoded = encodeSetData({
+			data,
+			merge: false,
+			ignoreUndefinedProperties: this.firestore._ignoreUndefinedProperties()
+		});
+		this.writes.push(
+			buildUpdateWrite(this.firestore, ref, encoded, { precondition: 'not-exists' })
+		);
 		return this;
 	}
 
-	update<T extends DocumentData>(ref: DocumentReference<T>, data: Record<string, unknown>): this {
-		const encoded = encodeUpdateData({ data });
-		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { requireExists: true }));
+	set<T extends DocumentData>(ref: DocumentReference<T>, data: T, options: SetOptions = {}): this {
+		const encoded = encodeSetData({
+			data,
+			merge: options.merge ?? false,
+			mergeFields: options.mergeFields,
+			ignoreUndefinedProperties: this.firestore._ignoreUndefinedProperties()
+		});
+		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { precondition: null }));
+		return this;
+	}
+
+	update<T extends DocumentData>(ref: DocumentReference<T>, data: Record<string, unknown>): this;
+	update<T extends DocumentData>(
+		ref: DocumentReference<T>,
+		field: string | FieldPath,
+		value: unknown,
+		...moreFieldsAndValues: unknown[]
+	): this;
+	update<T extends DocumentData>(
+		ref: DocumentReference<T>,
+		dataOrField: Record<string, unknown> | string | FieldPath,
+		value?: unknown,
+		...moreFieldsAndValues: unknown[]
+	): this {
+		const ignoreUndefinedProperties = this.firestore._ignoreUndefinedProperties();
+		let data: Record<string, unknown>;
+
+		if (typeof dataOrField === 'string' || dataOrField instanceof FieldPath) {
+			const pairs = [dataOrField, value, ...moreFieldsAndValues];
+			if (pairs.length < 2 || pairs.length % 2 !== 0) {
+				throw new Error('update() requires field/value pairs.');
+			}
+			const out: Record<string, unknown> = {};
+			for (let i = 0; i < pairs.length; i += 2) {
+				const fieldPath = pairs[i];
+				const fieldValue = pairs[i + 1];
+				if (!(typeof fieldPath === 'string' || fieldPath instanceof FieldPath)) {
+					throw new Error('update() field paths must be strings or FieldPath instances.');
+				}
+				const key = fieldPath instanceof FieldPath ? fieldPath.toString() : fieldPath;
+				out[key] = fieldValue;
+			}
+			data = out;
+		} else {
+			data = dataOrField;
+		}
+
+		const encoded = encodeUpdateData({ data, ignoreUndefinedProperties });
+		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { precondition: 'exists' }));
 		return this;
 	}
 
 	delete<T extends DocumentData>(ref: DocumentReference<T>): this {
-		const rest = this.firestore._getRestClient();
-		this.writes.push({ delete: rest.documentResourceName(ref.path) });
+		this.writes.push(buildDeleteWrite(this.firestore, ref));
 		return this;
 	}
 
-	async commit(): Promise<void> {
-		await this.firestore._getRestClient().commit({ writes: this.writes });
+	async commit(): Promise<WriteResult[]> {
+		const resp = await this.firestore._getRestClient().commit({ writes: this.writes });
+		return writeResultsFromCommit(resp, this.writes.length);
 	}
 }
 
@@ -514,23 +882,75 @@ export class Transaction {
 	}
 
 	set<T extends DocumentData>(ref: DocumentReference<T>, data: T, options: SetOptions = {}): this {
-		const encoded = encodeSetData({ data, merge: options.merge ?? false });
+		const encoded = encodeSetData({
+			data,
+			merge: options.merge ?? false,
+			mergeFields: options.mergeFields,
+			ignoreUndefinedProperties: this.firestore._ignoreUndefinedProperties()
+		});
 		this.didWrite = true;
-		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { requireExists: false }));
+		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { precondition: null }));
 		return this;
 	}
 
-	update<T extends DocumentData>(ref: DocumentReference<T>, data: Record<string, unknown>): this {
-		const encoded = encodeUpdateData({ data });
+	create<T extends DocumentData>(ref: DocumentReference<T>, data: T): this {
+		const encoded = encodeSetData({
+			data,
+			merge: false,
+			ignoreUndefinedProperties: this.firestore._ignoreUndefinedProperties()
+		});
 		this.didWrite = true;
-		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { requireExists: true }));
+		this.writes.push(
+			buildUpdateWrite(this.firestore, ref, encoded, { precondition: 'not-exists' })
+		);
+		return this;
+	}
+
+	update<T extends DocumentData>(ref: DocumentReference<T>, data: Record<string, unknown>): this;
+	update<T extends DocumentData>(
+		ref: DocumentReference<T>,
+		field: string | FieldPath,
+		value: unknown,
+		...moreFieldsAndValues: unknown[]
+	): this;
+	update<T extends DocumentData>(
+		ref: DocumentReference<T>,
+		dataOrField: Record<string, unknown> | string | FieldPath,
+		value?: unknown,
+		...moreFieldsAndValues: unknown[]
+	): this {
+		const ignoreUndefinedProperties = this.firestore._ignoreUndefinedProperties();
+		let data: Record<string, unknown>;
+
+		if (typeof dataOrField === 'string' || dataOrField instanceof FieldPath) {
+			const pairs = [dataOrField, value, ...moreFieldsAndValues];
+			if (pairs.length < 2 || pairs.length % 2 !== 0) {
+				throw new Error('update() requires field/value pairs.');
+			}
+			const out: Record<string, unknown> = {};
+			for (let i = 0; i < pairs.length; i += 2) {
+				const fieldPath = pairs[i];
+				const fieldValue = pairs[i + 1];
+				if (!(typeof fieldPath === 'string' || fieldPath instanceof FieldPath)) {
+					throw new Error('update() field paths must be strings or FieldPath instances.');
+				}
+				const key = fieldPath instanceof FieldPath ? fieldPath.toString() : fieldPath;
+				out[key] = fieldValue;
+			}
+			data = out;
+		} else {
+			data = dataOrField;
+		}
+
+		const encoded = encodeUpdateData({ data, ignoreUndefinedProperties });
+		this.didWrite = true;
+		this.writes.push(buildUpdateWrite(this.firestore, ref, encoded, { precondition: 'exists' }));
 		return this;
 	}
 
 	delete<T extends DocumentData>(ref: DocumentReference<T>): this {
-		const rest = this.firestore._getRestClient();
 		this.didWrite = true;
-		this.writes.push({ delete: rest.documentResourceName(ref.path) });
+		this.writes.push(buildDeleteWrite(this.firestore, ref));
 		return this;
 	}
 
@@ -545,7 +965,7 @@ function buildUpdateWrite<T extends DocumentData>(
 	firestore: Firestore,
 	ref: DocumentReference<T>,
 	encoded: EncodedDocumentWrite,
-	options: { requireExists: boolean }
+	options: { precondition: 'exists' | 'not-exists' | null }
 ): unknown {
 	const rest = firestore._getRestClient();
 	const docName = rest.documentResourceName(ref.path);
@@ -561,14 +981,40 @@ function buildUpdateWrite<T extends DocumentData>(
 	if (encoded.updateTransforms) {
 		write.updateTransforms = encoded.updateTransforms;
 	}
-	if (options.requireExists) {
+	if (options.precondition === 'exists') {
 		write.currentDocument = { exists: true };
+	}
+	if (options.precondition === 'not-exists') {
+		write.currentDocument = { exists: false };
 	}
 	return write;
 }
 
-function decodeDocumentPathFromName(resourceName: string, projectId: string): string {
-	const prefix = `projects/${projectId}/databases/(default)/documents/`;
+function buildDeleteWrite<T extends DocumentData>(
+	firestore: Firestore,
+	ref: DocumentReference<T>
+): unknown {
+	const rest = firestore._getRestClient();
+	return { delete: rest.documentResourceName(ref.path) };
+}
+
+function writeResultFromCommit(resp: CommitResponse, index: number): WriteResult {
+	const updateTime = resp.writeResults?.[index]?.updateTime;
+	const fallback = resp.commitTime;
+	const parsed = parseTimestampOrNull(updateTime ?? fallback);
+	return new WriteResult(parsed ?? Timestamp.now());
+}
+
+function writeResultsFromCommit(resp: CommitResponse, expectedWrites: number): WriteResult[] {
+	const results: WriteResult[] = [];
+	for (let i = 0; i < expectedWrites; i += 1) {
+		results.push(writeResultFromCommit(resp, i));
+	}
+	return results;
+}
+
+function decodeDocumentPathFromName(resourceName: string, databaseResourceName: string): string {
+	const prefix = `${databaseResourceName}/documents/`;
 	if (!resourceName.startsWith(prefix)) {
 		throw new Error(`Unexpected document name '${resourceName}'`);
 	}

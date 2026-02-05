@@ -1,18 +1,35 @@
 import { getFieldValueKind } from '../field-value.js';
 import type { FieldValueKind } from '../field-value.js';
+import type { FieldPath } from '../field-path.js';
 
-import { toFirestoreValue } from './value.js';
+import { toFirestoreValue, type FirestoreValueEncodeOptions } from './value.js';
 import type { FirestoreValue } from './types.js';
+
+type FieldPathInput = string | FieldPath;
 
 type FieldTransform =
 	| { fieldPath: string; setToServerValue: 'REQUEST_TIME' }
-	| { fieldPath: string; appendMissingElements: { values: FirestoreValue[] } };
+	| { fieldPath: string; appendMissingElements: { values: FirestoreValue[] } }
+	| { fieldPath: string; removeAllFromArray: { values: FirestoreValue[] } }
+	| { fieldPath: string; increment: FirestoreValue }
+	| { fieldPath: string; maximum: FirestoreValue }
+	| { fieldPath: string; minimum: FirestoreValue };
 
 export type EncodedDocumentWrite = {
 	fields: Record<string, FirestoreValue>;
 	updateMaskFieldPaths?: string[];
 	updateTransforms?: FieldTransform[];
 };
+
+function normalizeFieldPath(input: FieldPathInput): { fieldPath: string; segments: string[] } {
+	if (typeof input === 'string') {
+		const fieldPath = input;
+		const segments = input.split('.').filter((segment) => segment.length > 0);
+		return { fieldPath, segments };
+	}
+	const fieldPath = input.toString();
+	return { fieldPath, segments: [...input.segments] };
+}
 
 function ensureMap(
 	fields: Record<string, FirestoreValue>,
@@ -54,7 +71,13 @@ function setNestedField(
 	setNestedField(child, rest, value);
 }
 
-function collectLeafFieldPaths(value: unknown, currentPath: string, out: string[]): void {
+function collectLeafFieldPaths(
+	value: unknown,
+	currentPath: string,
+	out: string[],
+	options: FirestoreValueEncodeOptions
+): void {
+	const ignoreUndefinedProperties = options.ignoreUndefinedProperties ?? false;
 	const kind = getFieldValueKind(value);
 	if (kind) {
 		out.push(currentPath);
@@ -68,28 +91,41 @@ function collectLeafFieldPaths(value: unknown, currentPath: string, out: string[
 		out.push(currentPath);
 		return;
 	}
-	if (value === undefined || typeof value !== 'object') {
+	if (value === undefined) {
+		if (ignoreUndefinedProperties) {
+			return;
+		}
+		throw new Error('Cannot use "undefined" as a Firestore value.');
+	}
+	if (typeof value !== 'object') {
 		out.push(currentPath);
 		return;
 	}
 	if (Array.isArray(value)) {
+		if (!ignoreUndefinedProperties && value.some((entry) => entry === undefined)) {
+			throw new Error('Cannot use "undefined" as a Firestore value.');
+		}
 		out.push(currentPath);
 		return;
 	}
 	// Plain object: recurse into leaves.
 	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
 		if (entry === undefined) {
-			continue;
+			if (ignoreUndefinedProperties) {
+				continue;
+			}
+			throw new Error('Cannot use "undefined" as a Firestore value.');
 		}
 		const next = currentPath ? `${currentPath}.${key}` : key;
-		collectLeafFieldPaths(entry, next, out);
+		collectLeafFieldPaths(entry, next, out, options);
 	}
 }
 
 function encodeFieldTransform(
 	kind: FieldValueKind,
 	fieldPath: string,
-	value: unknown
+	value: unknown,
+	options: FirestoreValueEncodeOptions
 ): FieldTransform {
 	if (kind === 'serverTimestamp') {
 		return { fieldPath, setToServerValue: 'REQUEST_TIME' };
@@ -99,8 +135,28 @@ function encodeFieldTransform(
 		const elements = Array.isArray(rawElements) ? rawElements : [];
 		return {
 			fieldPath,
-			appendMissingElements: { values: elements.map((entry) => toFirestoreValue(entry)) }
+			appendMissingElements: { values: elements.map((entry) => toFirestoreValue(entry, options)) }
 		};
+	}
+	if (kind === 'arrayRemove') {
+		const rawElements = (value as { elements?: readonly unknown[] }).elements ?? [];
+		const elements = Array.isArray(rawElements) ? rawElements : [];
+		return {
+			fieldPath,
+			removeAllFromArray: { values: elements.map((entry) => toFirestoreValue(entry, options)) }
+		};
+	}
+	if (kind === 'increment') {
+		const operand = (value as { operand?: unknown }).operand;
+		return { fieldPath, increment: toFirestoreValue(operand, options) };
+	}
+	if (kind === 'maximum') {
+		const operand = (value as { operand?: unknown }).operand;
+		return { fieldPath, maximum: toFirestoreValue(operand, options) };
+	}
+	if (kind === 'minimum') {
+		const operand = (value as { operand?: unknown }).operand;
+		return { fieldPath, minimum: toFirestoreValue(operand, options) };
 	}
 	throw new Error(`Unsupported FieldValue transform '${kind}'`);
 }
@@ -109,40 +165,107 @@ function encodeUpdateEntry(options: {
 	fields: Record<string, FirestoreValue>;
 	updateMaskFieldPaths: string[];
 	updateTransforms: FieldTransform[];
-	fieldPath: string;
+	fieldPath: FieldPathInput;
 	value: unknown;
+	encodeOptions: FirestoreValueEncodeOptions;
 }): void {
-	const { fields, updateMaskFieldPaths, updateTransforms, fieldPath, value } = options;
+	const { fields, updateMaskFieldPaths, updateTransforms, fieldPath, value, encodeOptions } =
+		options;
+	const normalized = normalizeFieldPath(fieldPath);
 	const kind = getFieldValueKind(value);
 	if (kind === 'delete') {
-		updateMaskFieldPaths.push(fieldPath);
+		updateMaskFieldPaths.push(normalized.fieldPath);
 		return;
 	}
-	if (kind === 'serverTimestamp' || kind === 'arrayUnion') {
-		updateTransforms.push(encodeFieldTransform(kind, fieldPath, value));
+	if (
+		kind === 'serverTimestamp' ||
+		kind === 'arrayUnion' ||
+		kind === 'arrayRemove' ||
+		kind === 'increment' ||
+		kind === 'maximum' ||
+		kind === 'minimum'
+	) {
+		updateTransforms.push(encodeFieldTransform(kind, normalized.fieldPath, value, encodeOptions));
 		return;
 	}
 
-	updateMaskFieldPaths.push(fieldPath);
-	setNestedField(
-		fields,
-		fieldPath.split('.').filter((segment) => segment.length > 0),
-		toFirestoreValue(value)
-	);
+	updateMaskFieldPaths.push(normalized.fieldPath);
+	setNestedField(fields, normalized.segments, toFirestoreValue(value, encodeOptions));
 }
 
 export function encodeSetData(options: {
 	data: Record<string, unknown>;
 	merge: boolean;
+	mergeFields?: readonly FieldPathInput[];
+	ignoreUndefinedProperties: boolean;
 }): EncodedDocumentWrite {
-	const { data, merge } = options;
+	const { data, merge, mergeFields, ignoreUndefinedProperties } = options;
+	const encodeOptions: FirestoreValueEncodeOptions = { ignoreUndefinedProperties };
 	const fields: Record<string, FirestoreValue> = {};
 	const updateMaskFieldPaths: string[] = [];
 	const updateTransforms: FieldTransform[] = [];
 
+	if (mergeFields && mergeFields.length > 0) {
+		const seen = new Set<string>();
+		for (const fieldPathInput of mergeFields) {
+			const normalized = normalizeFieldPath(fieldPathInput);
+			if (seen.has(normalized.fieldPath)) {
+				continue;
+			}
+			seen.add(normalized.fieldPath);
+
+			let value: unknown = data;
+			for (const segment of normalized.segments) {
+				if (value === null || typeof value !== 'object') {
+					value = undefined;
+					break;
+				}
+				value = (value as Record<string, unknown>)[segment];
+			}
+
+			if (value === undefined) {
+				if (ignoreUndefinedProperties) {
+					continue;
+				}
+				throw new Error(`Missing value for merge field '${normalized.fieldPath}'.`);
+			}
+
+			const kind = getFieldValueKind(value);
+			if (kind === 'delete') {
+				updateMaskFieldPaths.push(normalized.fieldPath);
+				continue;
+			}
+			if (
+				kind === 'serverTimestamp' ||
+				kind === 'arrayUnion' ||
+				kind === 'arrayRemove' ||
+				kind === 'increment' ||
+				kind === 'maximum' ||
+				kind === 'minimum'
+			) {
+				updateTransforms.push(
+					encodeFieldTransform(kind, normalized.fieldPath, value, encodeOptions)
+				);
+				continue;
+			}
+
+			updateMaskFieldPaths.push(normalized.fieldPath);
+			setNestedField(fields, normalized.segments, toFirestoreValue(value, encodeOptions));
+		}
+
+		return {
+			fields,
+			updateMaskFieldPaths,
+			updateTransforms: updateTransforms.length > 0 ? updateTransforms : undefined
+		};
+	}
+
 	for (const [key, value] of Object.entries(data)) {
 		if (value === undefined) {
-			continue;
+			if (ignoreUndefinedProperties) {
+				continue;
+			}
+			throw new Error('Cannot use "undefined" as a Firestore value.');
 		}
 		const kind = getFieldValueKind(value);
 		if (kind === 'delete') {
@@ -151,21 +274,28 @@ export function encodeSetData(options: {
 			}
 			continue;
 		}
-		if (kind === 'serverTimestamp' || kind === 'arrayUnion') {
-			updateTransforms.push(encodeFieldTransform(kind, key, value));
+		if (
+			kind === 'serverTimestamp' ||
+			kind === 'arrayUnion' ||
+			kind === 'arrayRemove' ||
+			kind === 'increment' ||
+			kind === 'maximum' ||
+			kind === 'minimum'
+		) {
+			updateTransforms.push(encodeFieldTransform(kind, key, value, encodeOptions));
 			continue;
 		}
 		if (merge) {
 			setNestedField(
 				fields,
 				key.split('.').filter((segment) => segment.length > 0),
-				toFirestoreValue(value)
+				toFirestoreValue(value, encodeOptions)
 			);
 		} else {
-			fields[key] = toFirestoreValue(value);
+			fields[key] = toFirestoreValue(value, encodeOptions);
 		}
 		if (merge) {
-			collectLeafFieldPaths(value, key, updateMaskFieldPaths);
+			collectLeafFieldPaths(value, key, updateMaskFieldPaths, encodeOptions);
 		}
 	}
 
@@ -176,16 +306,32 @@ export function encodeSetData(options: {
 	};
 }
 
-export function encodeUpdateData(options: { data: Record<string, unknown> }): EncodedDocumentWrite {
+export function encodeUpdateData(options: {
+	data: Record<string, unknown>;
+	ignoreUndefinedProperties: boolean;
+}): EncodedDocumentWrite {
+	const encodeOptions: FirestoreValueEncodeOptions = {
+		ignoreUndefinedProperties: options.ignoreUndefinedProperties
+	};
 	const fields: Record<string, FirestoreValue> = {};
 	const updateMaskFieldPaths: string[] = [];
 	const updateTransforms: FieldTransform[] = [];
 
 	for (const [fieldPath, value] of Object.entries(options.data)) {
 		if (value === undefined) {
-			continue;
+			if (options.ignoreUndefinedProperties) {
+				continue;
+			}
+			throw new Error('Cannot use "undefined" as a Firestore value.');
 		}
-		encodeUpdateEntry({ fields, updateMaskFieldPaths, updateTransforms, fieldPath, value });
+		encodeUpdateEntry({
+			fields,
+			updateMaskFieldPaths,
+			updateTransforms,
+			fieldPath,
+			value,
+			encodeOptions
+		});
 	}
 
 	return {

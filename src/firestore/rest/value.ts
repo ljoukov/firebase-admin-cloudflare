@@ -2,6 +2,10 @@ import { Timestamp } from '../timestamp.js';
 
 import type { FirestoreValue } from './types.js';
 
+export type FirestoreValueEncodeOptions = {
+	ignoreUndefinedProperties?: boolean;
+};
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return (
 		typeof value === 'object' &&
@@ -18,12 +22,17 @@ function bytesToBase64(bytes: Uint8Array): string {
 	return btoa(binary);
 }
 
-export function toFirestoreValue(value: unknown): FirestoreValue {
+export function toFirestoreValue(
+	value: unknown,
+	options: FirestoreValueEncodeOptions = {}
+): FirestoreValue {
+	const ignoreUndefinedProperties = options.ignoreUndefinedProperties ?? false;
+
 	if (value === null) {
 		return { nullValue: null };
 	}
 	if (value === undefined) {
-		return { nullValue: null };
+		throw new Error('Cannot use "undefined" as a Firestore value.');
 	}
 	if (typeof value === 'boolean') {
 		return { booleanValue: value };
@@ -47,18 +56,24 @@ export function toFirestoreValue(value: unknown): FirestoreValue {
 		return { bytesValue: bytesToBase64(value) };
 	}
 	if (Array.isArray(value)) {
+		if (!ignoreUndefinedProperties && value.some((entry) => entry === undefined)) {
+			throw new Error('Cannot use "undefined" as a Firestore value.');
+		}
 		const values = value
 			.filter((entry) => entry !== undefined)
-			.map((entry) => toFirestoreValue(entry));
+			.map((entry) => toFirestoreValue(entry, options));
 		return { arrayValue: { values } };
 	}
 	if (isPlainObject(value)) {
 		const fields: Record<string, FirestoreValue> = {};
 		for (const [key, entry] of Object.entries(value)) {
 			if (entry === undefined) {
-				continue;
+				if (ignoreUndefinedProperties) {
+					continue;
+				}
+				throw new Error('Cannot use "undefined" as a Firestore value.');
 			}
-			fields[key] = toFirestoreValue(entry);
+			fields[key] = toFirestoreValue(entry, options);
 		}
 		return { mapValue: { fields } };
 	}
@@ -117,4 +132,19 @@ export function fromFirestoreValue(value: FirestoreValue): unknown {
 		return out;
 	}
 	return null;
+}
+
+export function toFirestoreValueLenient(value: unknown): FirestoreValue {
+	// Backwards-compat for internal callsites that intentionally ignore undefined values.
+	// Prefer `toFirestoreValue(value, { ignoreUndefinedProperties: true })`.
+	if (value === undefined) {
+		return { nullValue: null };
+	}
+	if (Array.isArray(value)) {
+		return toFirestoreValue(value, { ignoreUndefinedProperties: true });
+	}
+	if (typeof value === 'object' && value !== null) {
+		return toFirestoreValue(value, { ignoreUndefinedProperties: true });
+	}
+	return toFirestoreValue(value);
 }

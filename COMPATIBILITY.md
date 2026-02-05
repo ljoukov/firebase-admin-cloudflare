@@ -1,171 +1,100 @@
 # Firestore API compatibility
 
-This project implements a **subset** of the Firestore JavaScript API on top of:
+This project aims to be **source-compatible** with the Firebase Admin SDK Firestore API:
 
-- REST API: https://firebase.google.com/docs/firestore/reference/rest
-- RPC (WebChannel) API: https://firebase.google.com/docs/firestore/reference/rpc
-- JS API reference (target surface): https://firebase.google.com/docs/reference/js/firestore_
+- Admin API (target surface): https://firebase.google.com/docs/reference/admin/node/firebase-admin.firestore
 
-Notes:
+Under the hood, it talks to Firestore using:
 
-- The current implementation is closer to the **Admin / “classic” OO style** (e.g. `docRef.get()`, `firestore.batch()`),
-  not the **modular** `firebase/firestore` functional style (e.g. `getDoc(docRef)`, `writeBatch(firestore)`).
-- This is a server runtime (Cloudflare Workers) implementation: offline persistence, IndexedDB cache, bundles, and other
-  browser-only features are out of scope for now and are listed as **not supported**.
+- REST API: https://cloud.google.com/firestore/docs/reference/rest
+- WebChannel RPC transport for realtime `Listen` streams (document listeners)
+
+Because Cloudflare Workers don’t support Node gRPC, this library **does not** use `@google-cloud/firestore`.
 
 Support levels used below:
 
-- **Fully supported**: implemented and intended to behave like the JS SDK for the supported subset.
-- **Partially supported**: implemented, but missing overloads/options, has known gaps, or differs in behavior/types.
-- **Not supported yet**: not implemented/exported by this package.
+- **Supported**: implemented and intended to behave like the Admin SDK for this feature.
+- **Partially supported**: implemented, but missing overloads/options, or has known gaps.
+- **Not supported**: not implemented (yet) in this package.
 
-## Fully supported
+## Supported (Admin SDK style)
 
-### Core entry points
+### Initialization
 
-- `getFirestore(app?)`
-- `new Firestore({ app, baseUrl? })`
+- `initializeApp({ credential: cert(serviceAccount), ... })` via `@ljoukov/firebase-admin-cloudflare/app`
+- `getFirestore(app?)` via `@ljoukov/firebase-admin-cloudflare/firestore`
 
-### Document reads/writes
+Deviation vs `firebase-admin`: Cloudflare Workers can’t read local JSON files, so examples typically pass the service
+account JSON string via an environment variable (e.g. `GOOGLE_SERVICE_ACCOUNT_JSON`) and parse it in the Worker.
 
-- `firestore.doc(path)`
-- `DocumentReference.get()`
-- `DocumentReference.delete()`
-
-### Collections and basic queries
+### Firestore
 
 - `firestore.collection(path)`
-- `CollectionReference.doc(documentId)`
-- `Query.get()` (for queries composed of the supported `where`/`orderBy`/`limit` subset)
-
-### Batched writes
-
+- `firestore.doc(path)`
+- `firestore.collectionGroup(collectionId)` (**supported**; implemented via StructuredQuery `allDescendants`)
 - `firestore.batch()`
-- `WriteBatch.delete(ref)`
-- `WriteBatch.commit()`
+- `firestore.runTransaction(fn, { maxAttempts? })`
+- `firestore.getAll(...docRefs)` (**supported**; implemented as parallel `get()` calls)
+- `firestore.listCollections()` (**supported**; uses REST `listCollectionIds`)
+- `firestore.settings({ ignoreUndefinedProperties })` (**supported**)
 
-### Transactions (basic)
+### DocumentReference
 
-- `firestore.runTransaction(updateFn, { maxAttempts? })`
-- `Transaction.get(ref)`
-- `Transaction.delete(ref)`
-- `Transaction.commit()`
+- `get()`
+- `create(data)` (**supported**)
+- `set(data, { merge?, mergeFields? })` (**supported**)
+- `update(data)` and `update(field, value, ...pairs)` (**supported**)
+- `delete()` (**supported**)
+- `collection(path)`
+- `listCollections()` (**supported**; uses REST `listCollectionIds`)
+- `onSnapshot(onNext, onError?)` (**supported**; document listeners only, via WebChannel `Listen`)
 
-### Timestamp
+Note: write methods return a `WriteResult` (with `writeTime`), matching the Admin SDK shape.
 
-- `Timestamp.now()`, `Timestamp.fromDate()`, `Timestamp.fromMillis()`
-- `Timestamp.toDate()`, `Timestamp.toMillis()`, `Timestamp.isEqual()`, `Timestamp.valueOf()`
+### CollectionReference / Query
 
-## Partially supported
-
-### API shape vs `firebase/firestore` (modular)
-
-Notable differences from the modular JS API:
-
-- No top-level functions like `doc()`, `collection()`, `getDoc()`, `setDoc()`, `updateDoc()`, `deleteDoc()`.
-- No `writeBatch(firestore)` / `runTransaction(firestore, ...)` function forms.
-- Classes like `DocumentReference`, `Query`, and `WriteBatch` are project-specific and don’t implement converters/`toJSON()`
-  helpers from the modular SDK.
-
-### Document writes
-
-- `DocumentReference.set(data, options)`
-  - Supports `{ merge?: boolean }` only (no `mergeFields`).
-  - `FieldValue.delete()` is only honored when `merge: true` (otherwise ignored).
-- `DocumentReference.update(data)`
-  - Supports “object map” form only (no varargs overload).
-  - Nested updates require dot-separated paths (no `FieldPath`).
-
-### WriteBatch / Transaction writes
-
-- `WriteBatch.set(ref, data, options)` / `Transaction.set(ref, data, options)`
-  - Supports `{ merge?: boolean }` only (no `mergeFields`).
-- `WriteBatch.update(ref, data)` / `Transaction.update(ref, data)`
-  - Supports “object map” form only (no varargs overload).
-  - Dot-separated field paths only (no `FieldPath`).
-
-### Queries
-
-- `Query.where(fieldPath, op, value)`
-  - Supported operators: `==`, `<`, `<=`, `>`, `>=`.
-  - Multiple `where()` clauses are combined as `AND` only.
+- `CollectionReference.add(data)` (**supported**)
+- `CollectionReference.listDocuments({ pageSize? })` (**supported**; uses REST `listDocuments`)
+- `Query.where(fieldPath, op, value)` (**supported**, common ops including: `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`,
+  `not-in`, `array-contains`, `array-contains-any`)
 - `Query.orderBy(fieldPath, direction)`
-  - Supported directions: `'asc' | 'desc'`.
-- `Query.limit(n)`
-  - Supported, but there is no `limitToLast`.
-
-### Realtime listeners
-
-- `DocumentReference.onSnapshot(onNext, onError?)`
-  - Document listeners only (no query listeners).
-  - No options (`includeMetadataChanges`, etc) and no snapshot metadata surface.
-  - Implemented via WebChannel `Listen` (RPC), not the browser SDK’s local cache.
+- `Query.limit(n)` and `Query.limitToLast(n)` (**supported**; implemented by reversing the query order)
+- `Query.offset(n)` (**supported**)
+- `Query.select(...fieldPaths)` (**supported**)
+- `Query.get()`
 
 ### Snapshots
 
-- `DocumentSnapshot`
-  - Supports: `ref`, `id`, `exists` (boolean property), `data()`.
-  - Missing: `get(fieldPath)`, `metadata`, `toJSON()`, timestamps (`createTime`/`updateTime`/`readTime`), etc.
-- `QuerySnapshot`
-  - Supports: `docs`, `empty`, `size`.
-  - Missing: `forEach`, `docChanges`, `metadata`, `query`, `toJSON()`, etc.
+- `DocumentSnapshot`: `exists`, `ref`, `id`, `data()`, `get(fieldPath)`, `createTime`, `updateTime`, `readTime`
+- `QuerySnapshot`: `docs`, `empty`, `size`, `forEach(cb)`
 
-### FieldValue sentinels
+### FieldPath / FieldValue
 
-- Implemented:
-  - `FieldValue.delete()`
-  - `FieldValue.serverTimestamp()`
-  - `FieldValue.arrayUnion(...elements)`
-- Missing from the JS SDK surface:
-  - `arrayRemove`, `increment`, and other sentinels/helpers (see below).
+- `FieldPath` and `FieldPath.documentId()`
+- `FieldValue.delete()`, `serverTimestamp()`, `arrayUnion()`, `arrayRemove()`, `increment()`, `maximum()`, `minimum()`
 
-### Emulator support
+## Supported (client-style wrappers)
 
-- Supported via `FIRESTORE_EMULATOR_HOST` or `new Firestore({ baseUrl })`.
-- Not via `connectFirestoreEmulator()`.
+To make it easier to copy/paste examples from the client SDK docs, this package also exports a small set of
+**modular-style helpers** from `@ljoukov/firebase-admin-cloudflare/firestore`:
 
-### Value encoding/decoding
+- Reference builders: `doc()`, `collection()`
+- Reads/writes: `getDoc()`, `getDocs()`, `setDoc()`, `addDoc()`, `updateDoc()`, `deleteDoc()`
+- Query helpers: `query()`, `where()`, `orderBy()`, `limit()`, `limitToLast()`, `documentId()`
+- Writes/transactions: `writeBatch()`, `runTransaction()`
+- Sentinels: `serverTimestamp()`, `deleteField()`, `arrayUnion()`, `arrayRemove()`, `increment()`
+- Realtime: `onSnapshot()` (document listeners only)
 
-Supported value types (best-effort):
+These helpers call into the Admin-style classes above; they don’t implement browser-only features like persistence or
+offline cache.
 
-- `null`, `boolean`, `number`, `string`
-- `Date`, `Timestamp`
-- `Uint8Array` (encoded as base64)
-- Arrays and plain objects
+## Not supported (yet)
 
-Gaps vs the JS SDK:
+The Admin SDK surface is large (it re-exports most of `@google-cloud/firestore`). Notable gaps include:
 
-- No `Bytes`, `GeoPoint`, `DocumentReference` as a stored field value, vector values, etc.
-- Some unsupported JS types are coerced to strings (`bigint`, `symbol`, `function`) instead of throwing.
-
-## Not supported yet
-
-### Modular `firebase/firestore` functions
-
-- Document operations: `getDoc`, `getDocs`, `setDoc`, `addDoc`, `updateDoc`, `deleteDoc`
-- Reference builders: `doc`, `collection`, `collectionGroup`
-- Query helpers/constraints: `query`, `where`, `orderBy`, `limit`, `limitToLast`, `startAt`, `startAfter`, `endAt`,
-  `endBefore`
-- Realtime: `onSnapshot` (function form), `onSnapshotsInSync`
-- Writes: `writeBatch` (function form)
-- Transactions: `runTransaction` (function form)
-- Aggregations: `getCountFromServer`, `getAggregateFromServer`, `count`, `sum`, `average`
-- Settings/network/logging: `initializeFirestore`, `connectFirestoreEmulator`, `enableNetwork`, `disableNetwork`,
-  `setLogLevel`, `FirestoreSettings`, persistence helpers
-
-### Query features
-
-- Cursor pagination: `startAt`, `startAfter`, `endAt`, `endBefore`
-- Additional filters: `!=`, `in`, `not-in`, `array-contains`, `array-contains-any`, `or` filters
-- `documentId()` / `FieldPath.documentId()` sentinels
-- `collectionGroup()` queries
-- Aggregation queries (`RunAggregationQuery`)
-
-### REST/RPC surface (transport)
-
-Not yet used/implemented in this project:
-
-- REST: `batchGet`, `batchWrite`, `createDocument`, `patch` (`UpdateDocument`), `listDocuments`, `listCollectionIds`,
-  `rollback`, `partitionQuery`, `runAggregationQuery`, import/export admin endpoints
-- RPC: `Write` streaming, query targets in `Listen`, and other advanced RPC features
-
+- Query cursors and pagination: `startAt`, `startAfter`, `endAt`, `endBefore`
+- OR filters / advanced `Filter` helpers
+- Aggregations (`getCountFromServer`, `getAggregateFromServer`, `RunAggregationQuery`)
+- Query listeners (`Query.onSnapshot`) and metadata changes
+- BulkWriter, bundles, partition queries, streaming `Write`
+- Field value types like `GeoPoint`, `Bytes`, and `DocumentReference` stored as a value

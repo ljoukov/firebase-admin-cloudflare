@@ -15,7 +15,8 @@ This project is **not** an official Google/Firebase SDK.
 
 ## Status
 
-- Stable for the subset of official Firestore JavaScript API.
+- Stable for a growing subset of the Firebase Admin SDK Firestore API (`firebase-admin/firestore`).
+- See `COMPATIBILITY.md` for the supported API surface and known gaps.
 
 ## Why this exists
 
@@ -80,6 +81,31 @@ const snap = await db
 for (const doc of snap.docs) {
 	console.log(doc.id, doc.data());
 }
+```
+
+### Modular-style wrappers (optional)
+
+This package also exports a small set of client-style helpers so you can copy/paste many `firebase/firestore` examples:
+
+```ts
+import {
+	collection,
+	getDocs,
+	limit,
+	orderBy,
+	query,
+	where
+} from '@ljoukov/firebase-admin-cloudflare/firestore';
+
+const q = query(
+	collection(db, 'firebase-admin-cloudflare/demo/items'),
+	where('status', '==', 'active'),
+	orderBy('createdAt', 'desc'),
+	limit(20)
+);
+
+const snap = await getDocs(q);
+snap.forEach((doc) => console.log(doc.id, doc.data()));
 ```
 
 ### Realtime listen (document)

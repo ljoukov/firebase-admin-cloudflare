@@ -1,7 +1,17 @@
 import { toFirestoreValue } from './value.js';
 import type { FirestoreValue } from './types.js';
 
-export type WhereOp = '==' | '<' | '<=' | '>' | '>=';
+export type WhereOp =
+	| '=='
+	| '<'
+	| '<='
+	| '>'
+	| '>='
+	| '!='
+	| 'in'
+	| 'not-in'
+	| 'array-contains'
+	| 'array-contains-any';
 export type OrderDirection = 'asc' | 'desc';
 
 type FieldFilter = {
@@ -26,6 +36,16 @@ function encodeOp(op: WhereOp): string {
 			return 'GREATER_THAN';
 		case '>=':
 			return 'GREATER_THAN_OR_EQUAL';
+		case '!=':
+			return 'NOT_EQUAL';
+		case 'in':
+			return 'IN';
+		case 'not-in':
+			return 'NOT_IN';
+		case 'array-contains':
+			return 'ARRAY_CONTAINS';
+		case 'array-contains-any':
+			return 'ARRAY_CONTAINS_ANY';
 		default: {
 			throw new Error(`Unsupported where op '${String(op)}'`);
 		}
@@ -34,11 +54,18 @@ function encodeOp(op: WhereOp): string {
 
 export function encodeStructuredQuery(options: {
 	collectionId: string;
+	allDescendants?: boolean;
 	where: Array<{ fieldPath: string; op: WhereOp; value: unknown }>;
 	orderBy: Array<{ fieldPath: string; direction: OrderDirection }>;
 	limit: number | null;
+	offset?: number | null;
+	select?: string[] | null;
 }): unknown {
-	const from = [{ collectionId: options.collectionId }];
+	const from = [
+		options.allDescendants
+			? { collectionId: options.collectionId, allDescendants: true }
+			: { collectionId: options.collectionId }
+	];
 
 	let where: Filter | undefined;
 	const filters: Filter[] = options.where.map((entry) => ({
@@ -60,6 +87,11 @@ export function encodeStructuredQuery(options: {
 	}));
 
 	const structuredQuery: Record<string, unknown> = { from };
+	if (options.select && options.select.length > 0) {
+		structuredQuery.select = {
+			fields: options.select.map((fieldPath) => ({ fieldPath }))
+		};
+	}
 	if (where) {
 		structuredQuery.where = where;
 	}
@@ -68,6 +100,9 @@ export function encodeStructuredQuery(options: {
 	}
 	if (options.limit !== null) {
 		structuredQuery.limit = options.limit;
+	}
+	if (options.offset !== null && options.offset !== undefined) {
+		structuredQuery.offset = options.offset;
 	}
 	return structuredQuery;
 }

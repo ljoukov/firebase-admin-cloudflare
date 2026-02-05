@@ -10,6 +10,7 @@ describe('Firestore REST value conversions', () => {
 		expect(toFirestoreValue(123)).toEqual({ integerValue: '123' });
 		expect(toFirestoreValue(1.5)).toEqual({ doubleValue: 1.5 });
 		expect(toFirestoreValue('x')).toEqual({ stringValue: 'x' });
+		expect(() => toFirestoreValue(undefined)).toThrow(/undefined/i);
 	});
 
 	it('encodes Dates and Timestamps as timestampValue', () => {
@@ -32,6 +33,20 @@ describe('Firestore REST value conversions', () => {
 					b: { mapValue: { fields: { c: { stringValue: 'd' } } } }
 				}
 			}
+		});
+	});
+
+	it('optionally ignores undefined properties', () => {
+		expect(toFirestoreValue({ a: 1, b: undefined }, { ignoreUndefinedProperties: true })).toEqual({
+			mapValue: {
+				fields: {
+					a: { integerValue: '1' }
+				}
+			}
+		});
+
+		expect(toFirestoreValue([1, undefined, 2], { ignoreUndefinedProperties: true })).toEqual({
+			arrayValue: { values: [{ integerValue: '1' }, { integerValue: '2' }] }
 		});
 	});
 
