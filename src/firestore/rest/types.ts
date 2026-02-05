@@ -78,6 +78,24 @@ export const BatchGetDocumentsResponseSchema = z.object({
 
 export type BatchGetDocumentsResponse = z.infer<typeof BatchGetDocumentsResponseSchema>;
 
+export const RunAggregationQueryResponseSchema = z.object({
+	result: z
+		.object({
+			aggregateFields: z.record(z.string(), FirestoreValueSchema).optional()
+		})
+		.optional(),
+	readTime: z.string().optional(),
+	transaction: z.string().optional()
+});
+
+export type RunAggregationQueryResponse = z.infer<typeof RunAggregationQueryResponseSchema>;
+
+const GoogleRpcStatusSchema = z.object({
+	code: z.number().int().optional(),
+	message: z.string().optional(),
+	status: z.string().optional()
+});
+
 export const BeginTransactionResponseSchema = z.object({
 	transaction: z.string().trim().min(1)
 });
@@ -95,6 +113,27 @@ export const CommitResponseSchema = z.object({
 });
 
 export type CommitResponse = z.infer<typeof CommitResponseSchema>;
+
+export const BatchWriteResponseSchema = z.object({
+	writeResults: CommitResponseSchema.shape.writeResults.optional(),
+	status: z.array(GoogleRpcStatusSchema).optional()
+});
+
+export type BatchWriteResponse = z.infer<typeof BatchWriteResponseSchema>;
+
+export const CursorSchema = z.object({
+	values: z.array(FirestoreValueSchema).optional(),
+	before: z.boolean().optional()
+});
+
+export type Cursor = z.infer<typeof CursorSchema>;
+
+export const PartitionQueryResponseSchema = z.object({
+	partitions: z.array(CursorSchema).optional(),
+	nextPageToken: z.string().optional()
+});
+
+export type PartitionQueryResponse = z.infer<typeof PartitionQueryResponseSchema>;
 
 export const ListDocumentsResponseSchema = z.object({
 	documents: z.array(FirestoreDocumentSchema).optional(),

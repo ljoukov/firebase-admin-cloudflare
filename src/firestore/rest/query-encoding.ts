@@ -1,5 +1,6 @@
 import { toFirestoreValue } from './value.js';
 import type { FirestoreValue } from './types.js';
+import type { FilterNode } from '../filter.js';
 
 export type WhereOp =
 	| '=='
@@ -15,14 +16,12 @@ export type WhereOp =
 export type OrderDirection = 'asc' | 'desc';
 
 type FieldFilter = {
-	fieldFilter: {
-		field: { fieldPath: string };
-		op: string;
-		value: FirestoreValue;
-	};
+	fieldFilter: { field: { fieldPath: string }; op: string; value: FirestoreValue };
 };
 
-type Filter = FieldFilter | { compositeFilter: { op: 'AND'; filters: Filter[] } };
+type StructuredQueryFilter =
+	| FieldFilter
+	| { compositeFilter: { op: 'AND' | 'OR'; filters: StructuredQueryFilter[] } };
 
 function encodeOp(op: WhereOp): string {
 	switch (op) {
@@ -52,14 +51,34 @@ function encodeOp(op: WhereOp): string {
 	}
 }
 
+function encodeFilterNode(node: FilterNode): StructuredQueryFilter {
+	if (node.kind === 'field') {
+		return {
+			fieldFilter: {
+				field: { fieldPath: node.fieldPath },
+				op: encodeOp(node.op),
+				value: toFirestoreValue(node.value)
+			}
+		};
+	}
+	return {
+		compositeFilter: {
+			op: node.op,
+			filters: node.filters.map((entry) => encodeFilterNode(entry))
+		}
+	};
+}
+
 export function encodeStructuredQuery(options: {
 	collectionId: string;
 	allDescendants?: boolean;
-	where: Array<{ fieldPath: string; op: WhereOp; value: unknown }>;
+	where: FilterNode | null;
 	orderBy: Array<{ fieldPath: string; direction: OrderDirection }>;
 	limit: number | null;
 	offset?: number | null;
 	select?: string[] | null;
+	startAt?: { values: unknown[]; inclusive: boolean } | null;
+	endAt?: { values: unknown[]; inclusive: boolean } | null;
 }): unknown {
 	const from = [
 		options.allDescendants
@@ -67,19 +86,7 @@ export function encodeStructuredQuery(options: {
 			: { collectionId: options.collectionId }
 	];
 
-	let where: Filter | undefined;
-	const filters: Filter[] = options.where.map((entry) => ({
-		fieldFilter: {
-			field: { fieldPath: entry.fieldPath },
-			op: encodeOp(entry.op),
-			value: toFirestoreValue(entry.value)
-		}
-	}));
-	if (filters.length === 1) {
-		where = filters[0];
-	} else if (filters.length > 1) {
-		where = { compositeFilter: { op: 'AND', filters } };
-	}
+	const where = options.where ? encodeFilterNode(options.where) : undefined;
 
 	const orderBy = options.orderBy.map((entry) => ({
 		field: { fieldPath: entry.fieldPath },
@@ -103,6 +110,18 @@ export function encodeStructuredQuery(options: {
 	}
 	if (options.offset !== null && options.offset !== undefined) {
 		structuredQuery.offset = options.offset;
+	}
+	if (options.startAt && options.startAt.values.length > 0) {
+		structuredQuery.startAt = {
+			before: options.startAt.inclusive,
+			values: options.startAt.values.map((entry) => toFirestoreValue(entry))
+		};
+	}
+	if (options.endAt && options.endAt.values.length > 0) {
+		structuredQuery.endAt = {
+			before: !options.endAt.inclusive,
+			values: options.endAt.values.map((entry) => toFirestoreValue(entry))
+		};
 	}
 	return structuredQuery;
 }

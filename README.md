@@ -9,7 +9,7 @@
 Firestore “admin SDK” implementation that works on **Cloudflare Workers**, **Node.js** (18+), and **Bun** by using:
 
 - **Firestore REST API** for CRUD / queries
-- **Firestore WebChannel** transport for realtime `Listen` streams (document listeners)
+- **Firestore WebChannel** transport for realtime `Listen` streams (document + query listeners)
 
 This project is **not** an official Google/Firebase SDK.
 
@@ -195,8 +195,6 @@ with the `https://www.googleapis.com/auth/datastore` scope.
 - Never ship it to browsers.
 - In Cloudflare, store it as a **secret** (e.g. `GOOGLE_SERVICE_ACCOUNT_JSON`).
 
-`GOOGLE_API_KEY` is **not required** and is not used by this project.
-
 ## Implemented API (current)
 
 Surface area is intentionally minimal and grows based on real usage.
@@ -208,8 +206,12 @@ Surface area is intentionally minimal and grows based on real usage.
   - `getFirestore()`, `new Firestore({ app, baseUrl? })`
   - `collection()`, `doc()`
   - `DocumentReference`: `get`, `set({ merge? })`, `update`, `delete`, `onSnapshot`
-  - `Query`: `where`, `orderBy`, `limit`, `get`
+  - `Query`: `where` (+ `Filter.or/and`), `orderBy`, `limit`, `limitToLast`, cursors (`startAt`/`endAt`…), `get`,
+    `onSnapshot`
+  - Aggregations: `Query.count()`, `Query.aggregate({...}).get()`
+  - Partition queries: `Query.getPartitions(n)`
   - `WriteBatch`: `set`, `update`, `delete`, `commit`
+  - `BulkWriter`: `bulkWriter()`, `create`, `set`, `update`, `delete`, `flush`, `close`
   - `runTransaction()` with retries for retryable errors
 - Sentinels:
   - `FieldValue.delete()`, `FieldValue.serverTimestamp()`, `FieldValue.arrayUnion()`
@@ -259,7 +261,8 @@ See `examples/README.md` for more context.
 
 ## Limitations / roadmap
 
-- Only **document** realtime listeners are implemented today (no query listeners).
+- Query listeners refresh snapshots via REST `get()` on each WebChannel event (no incremental watch stream processing).
+- `firestore.bundle(...).build()` is not implemented yet (method exists; `build()` throws).
 - API compatibility with `firebase-admin` is a goal, but only the subset needed by upstream projects is implemented first.
 
 ## License

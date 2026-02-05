@@ -1,5 +1,7 @@
 import type { DocumentData, SetOptions, TransactionOptions } from './firestore.js';
 import {
+	AggregateField,
+	AggregateQuerySnapshot,
 	CollectionReference,
 	DocumentReference,
 	DocumentSnapshot,
@@ -10,6 +12,7 @@ import {
 	WriteBatch
 } from './firestore.js';
 import { FieldPath } from './field-path.js';
+import { Filter } from './filter.js';
 import { FieldValue } from './field-value.js';
 import type { OrderDirection, WhereOp } from './rest/query-encoding.js';
 
@@ -17,6 +20,10 @@ export type Unsubscribe = () => void;
 
 export type QueryConstraint<T extends DocumentData = DocumentData> = {
 	_apply(query: Query<T>): Query<T>;
+};
+
+export type QueryFilterConstraint<T extends DocumentData = DocumentData> = QueryConstraint<T> & {
+	_asFilter(): Filter;
 };
 
 function joinSegments(segments: readonly string[]): string {
@@ -59,6 +66,19 @@ export async function getDocs<T extends DocumentData = DocumentData>(
 	query: Query<T>
 ): Promise<QuerySnapshot<T>> {
 	return await query.get();
+}
+
+export async function getCountFromServer<T extends DocumentData = DocumentData>(
+	query: Query<T>
+): Promise<AggregateQuerySnapshot> {
+	return await query.count().get();
+}
+
+export async function getAggregateFromServer<T extends DocumentData = DocumentData>(
+	query: Query<T>,
+	aggregations: Record<string, AggregateField>
+): Promise<AggregateQuerySnapshot> {
+	return await query.aggregate(aggregations).get();
 }
 
 export async function setDoc<T extends DocumentData = DocumentData>(
@@ -128,10 +148,43 @@ export function where<T extends DocumentData = DocumentData>(
 	fieldPath: string | FieldPath,
 	op: WhereOp,
 	value: unknown
-): QueryConstraint<T> {
+): QueryFilterConstraint<T> {
 	return {
 		_apply(q) {
 			return q.where(fieldPath, op, value);
+		},
+		_asFilter() {
+			return Filter.where(fieldPath, op, value);
+		}
+	};
+}
+
+export function or<T extends DocumentData = DocumentData>(
+	...filters: Array<QueryFilterConstraint<T>>
+): QueryFilterConstraint<T> {
+	return {
+		_apply(q) {
+			const nodes = filters.map((entry) => entry._asFilter());
+			return q.where(Filter.or(...nodes));
+		},
+		_asFilter() {
+			const nodes = filters.map((entry) => entry._asFilter());
+			return Filter.or(...nodes);
+		}
+	};
+}
+
+export function and<T extends DocumentData = DocumentData>(
+	...filters: Array<QueryFilterConstraint<T>>
+): QueryFilterConstraint<T> {
+	return {
+		_apply(q) {
+			const nodes = filters.map((entry) => entry._asFilter());
+			return q.where(Filter.and(...nodes));
+		},
+		_asFilter() {
+			const nodes = filters.map((entry) => entry._asFilter());
+			return Filter.and(...nodes);
 		}
 	};
 }
@@ -163,8 +216,84 @@ export function limitToLast<T extends DocumentData = DocumentData>(n: number): Q
 	};
 }
 
+export function startAt<T extends DocumentData = DocumentData>(
+	snapshot: DocumentSnapshot<T>
+): QueryConstraint<T>;
+export function startAt<T extends DocumentData = DocumentData>(
+	...fieldValues: unknown[]
+): QueryConstraint<T>;
+export function startAt<T extends DocumentData = DocumentData>(
+	...args: unknown[]
+): QueryConstraint<T> {
+	return {
+		_apply(q) {
+			return q.startAt(...(args as [unknown, ...unknown[]]));
+		}
+	};
+}
+
+export function startAfter<T extends DocumentData = DocumentData>(
+	snapshot: DocumentSnapshot<T>
+): QueryConstraint<T>;
+export function startAfter<T extends DocumentData = DocumentData>(
+	...fieldValues: unknown[]
+): QueryConstraint<T>;
+export function startAfter<T extends DocumentData = DocumentData>(
+	...args: unknown[]
+): QueryConstraint<T> {
+	return {
+		_apply(q) {
+			return q.startAfter(...(args as [unknown, ...unknown[]]));
+		}
+	};
+}
+
+export function endAt<T extends DocumentData = DocumentData>(
+	snapshot: DocumentSnapshot<T>
+): QueryConstraint<T>;
+export function endAt<T extends DocumentData = DocumentData>(
+	...fieldValues: unknown[]
+): QueryConstraint<T>;
+export function endAt<T extends DocumentData = DocumentData>(
+	...args: unknown[]
+): QueryConstraint<T> {
+	return {
+		_apply(q) {
+			return q.endAt(...(args as [unknown, ...unknown[]]));
+		}
+	};
+}
+
+export function endBefore<T extends DocumentData = DocumentData>(
+	snapshot: DocumentSnapshot<T>
+): QueryConstraint<T>;
+export function endBefore<T extends DocumentData = DocumentData>(
+	...fieldValues: unknown[]
+): QueryConstraint<T>;
+export function endBefore<T extends DocumentData = DocumentData>(
+	...args: unknown[]
+): QueryConstraint<T> {
+	return {
+		_apply(q) {
+			return q.endBefore(...(args as [unknown, ...unknown[]]));
+		}
+	};
+}
+
 export function documentId(): FieldPath {
 	return FieldPath.documentId();
+}
+
+export function count(): AggregateField {
+	return AggregateField.count();
+}
+
+export function sum(fieldPath: string | FieldPath): AggregateField {
+	return AggregateField.sum(fieldPath);
+}
+
+export function average(fieldPath: string | FieldPath): AggregateField {
+	return AggregateField.average(fieldPath);
 }
 
 export function serverTimestamp(): FieldValue {
@@ -191,6 +320,19 @@ export function onSnapshot<T extends DocumentData = DocumentData>(
 	ref: DocumentReference<T>,
 	onNext: (snapshot: DocumentSnapshot<T>) => void,
 	onError?: (error: unknown) => void
+): Unsubscribe;
+export function onSnapshot<T extends DocumentData = DocumentData>(
+	query: Query<T>,
+	onNext: (snapshot: QuerySnapshot<T>) => void,
+	onError?: (error: unknown) => void
+): Unsubscribe;
+export function onSnapshot<T extends DocumentData = DocumentData>(
+	refOrQuery: DocumentReference<T> | Query<T>,
+	onNext: ((snapshot: DocumentSnapshot<T>) => void) | ((snapshot: QuerySnapshot<T>) => void),
+	onError?: (error: unknown) => void
 ): Unsubscribe {
-	return ref.onSnapshot(onNext, onError);
+	return (refOrQuery as unknown as { onSnapshot: (...args: unknown[]) => Unsubscribe }).onSnapshot(
+		onNext as unknown,
+		onError
+	);
 }

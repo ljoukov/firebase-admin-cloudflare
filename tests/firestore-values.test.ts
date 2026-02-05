@@ -31,6 +31,22 @@ describe('Firestore REST value conversions', () => {
 		expect(toFirestoreValue(point)).toEqual({ geoPointValue: { latitude: 1, longitude: 2 } });
 	});
 
+	it('encodes DocumentReference-like values as referenceValue', () => {
+		const refLike = {
+			path: 'firebase-admin-cloudflare/demo/items/doc-1',
+			firestore: {
+				_getRestClient: () => ({
+					documentResourceName: (path: string) => `projects/p/databases/(default)/documents/${path}`
+				})
+			}
+		};
+
+		expect(toFirestoreValue(refLike)).toEqual({
+			referenceValue:
+				'projects/p/databases/(default)/documents/firebase-admin-cloudflare/demo/items/doc-1'
+		});
+	});
+
 	it('encodes arrays and objects', () => {
 		expect(toFirestoreValue([1, 'a', null])).toEqual({
 			arrayValue: { values: [{ integerValue: '1' }, { stringValue: 'a' }, { nullValue: null }] }
@@ -69,6 +85,22 @@ describe('Firestore REST value conversions', () => {
 		const out = fromFirestoreValue({ timestampValue: '2026-02-04T00:00:00.000Z' });
 		expect(out).toBeInstanceOf(Timestamp);
 		expect((out as Timestamp).toDate().toISOString()).toBe('2026-02-04T00:00:00.000Z');
+	});
+
+	it('decodes referenceValue via resolver when provided', () => {
+		const resolver = (resourceName: string) => ({ resourceName });
+		expect(
+			fromFirestoreValue(
+				{
+					mapValue: {
+						fields: {
+							ref: { referenceValue: 'projects/p/databases/(default)/documents/a/b' }
+						}
+					}
+				},
+				{ referenceValueResolver: resolver }
+			)
+		).toEqual({ ref: { resourceName: 'projects/p/databases/(default)/documents/a/b' } });
 	});
 
 	it('decodes bytesValue and geoPointValue', () => {

@@ -7,7 +7,7 @@ This project aims to be **source-compatible** with the Firebase Admin SDK Firest
 Under the hood, it talks to Firestore using:
 
 - REST API: https://cloud.google.com/firestore/docs/reference/rest
-- WebChannel RPC transport for realtime `Listen` streams (document listeners)
+- WebChannel RPC transport for realtime `Listen` streams (document + query listeners)
 
 Because Cloudflare Workers don’t support Node gRPC, this library **does not** use `@google-cloud/firestore`.
 
@@ -57,22 +57,31 @@ Note: write methods return a `WriteResult` (with `writeTime`), matching the Admi
 - `CollectionReference.listDocuments({ pageSize? })` (**supported**; uses REST `listDocuments`)
 - `Query.where(fieldPath, op, value)` (**supported**, common ops including: `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`,
   `not-in`, `array-contains`, `array-contains-any`)
+- Composite filters: `Filter.where`, `Filter.or`, `Filter.and`, `Query.where(filter)` (**supported**)
 - `Query.orderBy(fieldPath, direction)`
+- Query cursors: `startAt`, `startAfter`, `endAt`, `endBefore` (**supported**)
 - `Query.limit(n)` and `Query.limitToLast(n)` (**supported**; implemented by reversing the query order)
 - `Query.offset(n)` (**supported**)
 - `Query.select(...fieldPaths)` (**supported**)
 - `Query.get()`
+- Aggregations: `Query.count()`, `Query.aggregate({...}).get()` (**supported**; uses REST `runAggregationQuery`)
+- Partition queries: `Query.getPartitions(n)` (**partially supported**; uses REST `partitionQuery`)
+- Realtime: `Query.onSnapshot(...)` (**partially supported**; uses WebChannel `Listen` and refreshes via REST `get()`)
 
 ### Snapshots
 
-- `DocumentSnapshot`: `exists`, `ref`, `id`, `data()`, `get(fieldPath)`, `createTime`, `updateTime`, `readTime`
-- `QuerySnapshot`: `docs`, `empty`, `size`, `forEach(cb)`
+- `DocumentSnapshot`: `exists`, `ref`, `id`, `data()`, `get(fieldPath)`, `createTime`, `updateTime`, `readTime`,
+  `metadata`
+- `QuerySnapshot`: `docs`, `empty`, `size`, `forEach(cb)`, `docChanges()`, `metadata`
+
+Note: snapshot metadata is always `{ fromCache: false, hasPendingWrites: false }` (server reads).
 
 ### FieldPath / FieldValue
 
 - `FieldPath` and `FieldPath.documentId()`
 - `FieldValue.delete()`, `serverTimestamp()`, `arrayUnion()`, `arrayRemove()`, `increment()`, `maximum()`, `minimum()`
 - `Bytes` and `GeoPoint` value types
+- `DocumentReference` stored as a value (**supported**; encoded/decoded as `referenceValue`)
 
 ## Supported (client-style wrappers)
 
@@ -82,9 +91,12 @@ To make it easier to copy/paste examples from the client SDK docs, this package 
 - Reference builders: `doc()`, `collection()`
 - Reads/writes: `getDoc()`, `getDocs()`, `setDoc()`, `addDoc()`, `updateDoc()`, `deleteDoc()`
 - Query helpers: `query()`, `where()`, `orderBy()`, `limit()`, `limitToLast()`, `documentId()`
+- Composite filters: `or()`, `and()`
+- Cursors: `startAt()`, `startAfter()`, `endAt()`, `endBefore()`
+- Aggregations: `count()`, `sum()`, `average()`, `getCountFromServer()`, `getAggregateFromServer()`
 - Writes/transactions: `writeBatch()`, `runTransaction()`
 - Sentinels: `serverTimestamp()`, `deleteField()`, `arrayUnion()`, `arrayRemove()`, `increment()`
-- Realtime: `onSnapshot()` (document listeners only)
+- Realtime: `onSnapshot()` (documents and queries)
 
 These helpers call into the Admin-style classes above; they don’t implement browser-only features like persistence or
 offline cache.
@@ -93,9 +105,5 @@ offline cache.
 
 The Admin SDK surface is large (it re-exports most of `@google-cloud/firestore`). Notable gaps include:
 
-- Query cursors and pagination: `startAt`, `startAfter`, `endAt`, `endBefore`
-- OR filters / advanced `Filter` helpers
-- Aggregations (`getCountFromServer`, `getAggregateFromServer`, `RunAggregationQuery`)
-- Query listeners (`Query.onSnapshot`) and metadata changes
-- BulkWriter, bundles, partition queries, streaming `Write`
-- Field value types like `DocumentReference` stored as a value
+- Bundles (`firestore.bundle(...).build()`) (method exists but `build()` throws)
+- Streaming `Write` / gRPC-only APIs (Workers limitation)

@@ -8,6 +8,46 @@ export type FirestoreValueEncodeOptions = {
 	ignoreUndefinedProperties?: boolean;
 };
 
+export type FirestoreValueDecodeOptions = {
+	referenceValueResolver?: (resourceName: string) => unknown;
+};
+
+type DocumentReferenceLike = {
+	path: string;
+	firestore: {
+		_getRestClient: () => {
+			documentResourceName: (documentPath: string) => string;
+		};
+	};
+};
+
+function isDocumentReferenceLike(value: unknown): value is DocumentReferenceLike {
+	if (typeof value !== 'object' || value === null) {
+		return false;
+	}
+	const maybe = value as { path?: unknown; firestore?: unknown };
+	if (typeof maybe.path !== 'string') {
+		return false;
+	}
+	if (typeof maybe.firestore !== 'object' || maybe.firestore === null) {
+		return false;
+	}
+	const firestore = maybe.firestore as { _getRestClient?: unknown };
+	if (typeof firestore._getRestClient !== 'function') {
+		return false;
+	}
+	const getRestClient = firestore._getRestClient as () => unknown;
+	const rest = getRestClient();
+	if (typeof rest !== 'object' || rest === null) {
+		return false;
+	}
+	const documentResourceName = (rest as { documentResourceName?: unknown }).documentResourceName;
+	if (typeof documentResourceName !== 'function') {
+		return false;
+	}
+	return true;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return (
 		typeof value === 'object' &&
@@ -60,6 +100,10 @@ export function toFirestoreValue(
 	if (value instanceof GeoPoint) {
 		return { geoPointValue: { latitude: value.latitude, longitude: value.longitude } };
 	}
+	if (isDocumentReferenceLike(value)) {
+		const rest = value.firestore._getRestClient();
+		return { referenceValue: rest.documentResourceName(value.path) };
+	}
 	if (value instanceof Uint8Array) {
 		return { bytesValue: bytesToBase64(value) };
 	}
@@ -97,7 +141,10 @@ export function toFirestoreValue(
 	throw new Error('Unsupported value type for Firestore encoding.');
 }
 
-export function fromFirestoreValue(value: FirestoreValue): unknown {
+export function fromFirestoreValue(
+	value: FirestoreValue,
+	options: FirestoreValueDecodeOptions = {}
+): unknown {
 	if ('nullValue' in value) {
 		return null;
 	}
@@ -128,20 +175,22 @@ export function fromFirestoreValue(value: FirestoreValue): unknown {
 		return Timestamp.fromDate(date);
 	}
 	if ('referenceValue' in value) {
-		return value.referenceValue;
+		return options.referenceValueResolver
+			? options.referenceValueResolver(value.referenceValue)
+			: value.referenceValue;
 	}
 	if ('geoPointValue' in value) {
 		return new GeoPoint(value.geoPointValue.latitude, value.geoPointValue.longitude);
 	}
 	if ('arrayValue' in value) {
 		const values = value.arrayValue.values ?? [];
-		return values.map((entry) => fromFirestoreValue(entry));
+		return values.map((entry) => fromFirestoreValue(entry, options));
 	}
 	if ('mapValue' in value) {
 		const out: Record<string, unknown> = {};
 		const fields = value.mapValue.fields ?? {};
 		for (const [key, entry] of Object.entries(fields)) {
-			out[key] = fromFirestoreValue(entry);
+			out[key] = fromFirestoreValue(entry, options);
 		}
 		return out;
 	}

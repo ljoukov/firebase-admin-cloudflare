@@ -2,17 +2,23 @@ import { z } from 'zod';
 
 import type {
 	BatchGetDocumentsResponse,
+	BatchWriteResponse,
 	CommitResponse,
 	FirestoreDocument,
+	PartitionQueryResponse,
+	RunAggregationQueryResponse,
 	RunQueryResponse
 } from './types.js';
 import {
+	BatchWriteResponseSchema,
 	BatchGetDocumentsResponseSchema,
 	BeginTransactionResponseSchema,
 	CommitResponseSchema,
 	FirestoreDocumentSchema,
 	ListCollectionIdsResponseSchema,
 	ListDocumentsResponseSchema,
+	PartitionQueryResponseSchema,
+	RunAggregationQueryResponseSchema,
 	RunQueryResponseSchema
 } from './types.js';
 
@@ -104,12 +110,21 @@ export class FirestoreRestClient {
 		return `${this.baseUrl}/v1/${encoded}:runQuery`;
 	}
 
+	runAggregationQueryUrl(parentResourceName: string): string {
+		const encoded = encodeResourceNameForUrl(parentResourceName);
+		return `${this.baseUrl}/v1/${encoded}:runAggregationQuery`;
+	}
+
 	beginTransactionUrl(): string {
 		return `${this.baseUrl}/v1/${this.databaseResourceName()}/documents:beginTransaction`;
 	}
 
 	commitUrl(): string {
 		return `${this.baseUrl}/v1/${this.databaseResourceName()}/documents:commit`;
+	}
+
+	batchWriteUrl(): string {
+		return `${this.baseUrl}/v1/${this.databaseResourceName()}/documents:batchWrite`;
 	}
 
 	listDocumentsUrl(collectionPath: string): string {
@@ -124,6 +139,11 @@ export class FirestoreRestClient {
 
 	batchGetDocumentsUrl(): string {
 		return `${this.baseUrl}/v1/${this.databaseResourceName()}/documents:batchGet`;
+	}
+
+	partitionQueryUrl(parentResourceName: string): string {
+		const encoded = encodeResourceNameForUrl(parentResourceName);
+		return `${this.baseUrl}/v1/${encoded}:partitionQuery`;
 	}
 
 	async getDocument(options: {
@@ -215,6 +235,35 @@ export class FirestoreRestClient {
 		return parsed.data;
 	}
 
+	async runAggregationQuery(options: {
+		parentResourceName: string;
+		structuredAggregationQuery: unknown;
+		transaction?: string;
+	}): Promise<RunAggregationQueryResponse[]> {
+		const body: Record<string, unknown> = {
+			structuredAggregationQuery: options.structuredAggregationQuery
+		};
+		if (options.transaction) {
+			body.transaction = options.transaction;
+		}
+
+		const resp = await this.authedFetch(this.runAggregationQueryUrl(options.parentResourceName), {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!resp.ok) {
+			throw await this.toError(resp, 'Firestore runAggregationQuery failed');
+		}
+
+		const json = await resp.json();
+		const parsed = z.array(RunAggregationQueryResponseSchema).safeParse(json);
+		if (!parsed.success) {
+			throw new Error('Firestore runAggregationQuery returned an invalid JSON payload.');
+		}
+		return parsed.data;
+	}
+
 	async beginTransaction(): Promise<string> {
 		const resp = await this.authedFetch(this.beginTransactionUrl(), {
 			method: 'POST',
@@ -247,6 +296,24 @@ export class FirestoreRestClient {
 
 		const json = await resp.json();
 		return CommitResponseSchema.parse(json);
+	}
+
+	async batchWrite(options: { writes: unknown[] }): Promise<BatchWriteResponse> {
+		const body: Record<string, unknown> = {
+			writes: options.writes
+		};
+
+		const resp = await this.authedFetch(this.batchWriteUrl(), {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!resp.ok) {
+			throw await this.toError(resp, 'Firestore batchWrite failed');
+		}
+
+		const json = await resp.json();
+		return BatchWriteResponseSchema.parse(json);
 	}
 
 	async listDocuments(options: {
@@ -299,6 +366,41 @@ export class FirestoreRestClient {
 		const parsed = ListCollectionIdsResponseSchema.parse(json);
 		return {
 			collectionIds: parsed.collectionIds ?? [],
+			nextPageToken: parsed.nextPageToken ?? null
+		};
+	}
+
+	async partitionQuery(options: {
+		parentResourceName: string;
+		structuredQuery: unknown;
+		partitionCount: number;
+		pageSize?: number;
+		pageToken?: string;
+	}): Promise<{ partitions: PartitionQueryResponse['partitions']; nextPageToken: string | null }> {
+		const body: Record<string, unknown> = {
+			structuredQuery: options.structuredQuery,
+			partitionCount: String(options.partitionCount)
+		};
+		if (options.pageSize !== undefined) {
+			body.pageSize = options.pageSize;
+		}
+		if (options.pageToken) {
+			body.pageToken = options.pageToken;
+		}
+
+		const resp = await this.authedFetch(this.partitionQueryUrl(options.parentResourceName), {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!resp.ok) {
+			throw await this.toError(resp, 'Firestore partitionQuery failed');
+		}
+
+		const json = await resp.json();
+		const parsed = PartitionQueryResponseSchema.parse(json);
+		return {
+			partitions: parsed.partitions ?? [],
 			nextPageToken: parsed.nextPageToken ?? null
 		};
 	}
