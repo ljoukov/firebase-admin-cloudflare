@@ -8,7 +8,7 @@ import type { EncodedDocumentWrite } from './rest/write-encoding.js';
 import { encodeSetData, encodeUpdateData } from './rest/write-encoding.js';
 import { encodeStructuredQuery, type OrderDirection, type WhereOp } from './rest/query-encoding.js';
 import { FirestoreApiError, FirestoreRestClient } from './rest/client.js';
-import type { CommitResponse, FirestoreDocument } from './rest/types.js';
+import type { BatchGetDocumentsResponse, CommitResponse, FirestoreDocument } from './rest/types.js';
 import { fromFirestoreValue } from './rest/value.js';
 import { listenToDocument, listenToQuery } from './listen/listen.js';
 import { FieldPath } from './field-path.js';
@@ -414,7 +414,49 @@ export class Firestore {
 	async getAll<T extends DocumentData>(
 		...refs: Array<DocumentReference<T>>
 	): Promise<Array<DocumentSnapshot<T>>> {
-		return await Promise.all(refs.map((ref) => ref.get()));
+		if (refs.length === 0) {
+			throw new Error('Firestore.getAll() requires at least one DocumentReference.');
+		}
+
+		const allSameFirestore = refs.every((ref) => ref.firestore === this);
+		if (!allSameFirestore) {
+			throw new Error('Firestore.getAll() requires all DocumentReferences to belong to the same Firestore instance.');
+		}
+
+		const rest = this._getRestClient();
+		const docNames = refs.map((ref) => rest.documentResourceName(ref.path));
+		const responses = await rest.batchGetDocuments({ documentNames: docNames });
+
+		const byName = new Map<string, BatchGetDocumentsResponse>();
+		for (const resp of responses) {
+			const name = resp.found?.name ?? resp.missing;
+			if (name) {
+				byName.set(name, resp);
+			}
+		}
+
+		return refs.map((ref, i) => {
+			const resp = byName.get(docNames[i]);
+			if (!resp) {
+				throw new Error(`Did not receive document for '${ref.path}'.`);
+			}
+			if (!resp.found) {
+				return new DocumentSnapshot<T>({
+					ref,
+					exists: false,
+					data: null,
+					readTime: parseTimestampOrNull(resp.readTime)
+				});
+			}
+			return new DocumentSnapshot<T>({
+				ref,
+				exists: true,
+				data: decodeDocumentData(resp.found, this) as T,
+				createTime: parseTimestampOrNull(resp.found.createTime),
+				updateTime: parseTimestampOrNull(resp.found.updateTime),
+				readTime: parseTimestampOrNull(resp.readTime)
+			});
+		});
 	}
 
 	async listCollections(): Promise<Array<CollectionReference>> {

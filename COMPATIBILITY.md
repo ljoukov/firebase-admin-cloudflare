@@ -31,40 +31,40 @@ account JSON string via an environment variable (e.g. `GOOGLE_SERVICE_ACCOUNT_JS
 
 - `firestore.collection(path)`
 - `firestore.doc(path)`
-- `firestore.collectionGroup(collectionId)` (**supported**; implemented via StructuredQuery `allDescendants`)
+- `firestore.collectionGroup(collectionId)` (implemented via StructuredQuery `allDescendants`)
 - `firestore.batch()`
 - `firestore.runTransaction(fn, { maxAttempts? })`
-- `firestore.getAll(...docRefs)` (**supported**; implemented as parallel `get()` calls)
-- `firestore.listCollections()` (**supported**; uses REST `listCollectionIds`)
-- `firestore.settings({ ignoreUndefinedProperties })` (**supported**)
+- `firestore.getAll(...docRefs)` (uses REST `documents:batchGet`)
+- `firestore.listCollections()` (uses REST `listCollectionIds`)
+- `firestore.settings({ ignoreUndefinedProperties })`
 
 ### DocumentReference
 
 - `get()`
-- `create(data)` (**supported**)
-- `set(data, { merge?, mergeFields? })` (**supported**)
-- `update(data)` and `update(field, value, ...pairs)` (**supported**)
-- `delete()` (**supported**)
+- `create(data)`
+- `set(data, { merge?, mergeFields? })`
+- `update(data)` and `update(field, value, ...pairs)`
+- `delete()`
 - `collection(path)`
-- `listCollections()` (**supported**; uses REST `listCollectionIds`)
-- `onSnapshot(onNext, onError?)` (**supported**; document listeners only, via WebChannel `Listen`)
+- `listCollections()` (uses REST `listCollectionIds`)
+- `onSnapshot(onNext, onError?)` (document listeners only; via WebChannel `Listen`)
 
 Note: write methods return a `WriteResult` (with `writeTime`), matching the Admin SDK shape.
 
 ### CollectionReference / Query
 
-- `CollectionReference.add(data)` (**supported**)
-- `CollectionReference.listDocuments({ pageSize? })` (**supported**; uses REST `listDocuments`)
-- `Query.where(fieldPath, op, value)` (**supported**, common ops including: `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`,
+- `CollectionReference.add(data)`
+- `CollectionReference.listDocuments({ pageSize? })` (uses REST `listDocuments`)
+- `Query.where(fieldPath, op, value)` (common ops include: `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`,
   `not-in`, `array-contains`, `array-contains-any`)
-- Composite filters: `Filter.where`, `Filter.or`, `Filter.and`, `Query.where(filter)` (**supported**)
+- Composite filters: `Filter.where`, `Filter.or`, `Filter.and`, `Query.where(filter)`
 - `Query.orderBy(fieldPath, direction)`
-- Query cursors: `startAt`, `startAfter`, `endAt`, `endBefore` (**supported**)
-- `Query.limit(n)` and `Query.limitToLast(n)` (**supported**; implemented by reversing the query order)
-- `Query.offset(n)` (**supported**)
-- `Query.select(...fieldPaths)` (**supported**)
+- Query cursors: `startAt`, `startAfter`, `endAt`, `endBefore`
+- `Query.limit(n)` and `Query.limitToLast(n)` (implemented by reversing the query order)
+- `Query.offset(n)`
+- `Query.select(...fieldPaths)`
 - `Query.get()`
-- Aggregations: `Query.count()`, `Query.aggregate({...}).get()` (**supported**; uses REST `runAggregationQuery`)
+- Aggregations: `Query.count()`, `Query.aggregate({...}).get()` (uses REST `runAggregationQuery`)
 - Partition queries: `Query.getPartitions(n)` (**partially supported**; uses REST `partitionQuery`)
 - Realtime: `Query.onSnapshot(...)` (**partially supported**; uses WebChannel `Listen` and refreshes via REST `get()`)
 
@@ -81,7 +81,7 @@ Note: snapshot metadata is always `{ fromCache: false, hasPendingWrites: false }
 - `FieldPath` and `FieldPath.documentId()`
 - `FieldValue.delete()`, `serverTimestamp()`, `arrayUnion()`, `arrayRemove()`, `increment()`, `maximum()`, `minimum()`
 - `Bytes` and `GeoPoint` value types
-- `DocumentReference` stored as a value (**supported**; encoded/decoded as `referenceValue`)
+- `DocumentReference` stored as a value (encoded/decoded as `referenceValue`)
 
 ## Supported (client-style wrappers)
 
