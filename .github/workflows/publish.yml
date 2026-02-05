@@ -26,7 +26,7 @@ jobs:
           ref: ${{ env.TAG_NAME }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "20"
           registry-url: "https://registry.npmjs.org"
           cache: npm
       - run: npm ci
@@ -43,4 +43,4 @@ jobs:
             echo "Tag '${TAG_NAME}' does not match package.json version '${PACKAGE_VERSION}'."
             exit 1
           fi
-      - run: npm publish
+      - run: npm publish --provenance
