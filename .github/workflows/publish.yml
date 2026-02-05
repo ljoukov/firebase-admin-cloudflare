@@ -43,4 +43,4 @@ jobs:
             echo "Tag '${TAG_NAME}' does not match package.json version '${PACKAGE_VERSION}'."
             exit 1
           fi
-      - run: npm publish --provenance
+      - run: npm publish
