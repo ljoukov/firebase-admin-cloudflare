@@ -8,6 +8,8 @@ export type FirestoreValue =
 	| { stringValue: string }
 	| { bytesValue: string }
 	| { timestampValue: string }
+	| { referenceValue: string }
+	| { geoPointValue: { latitude: number; longitude: number } }
 	| { mapValue: { fields?: Record<string, FirestoreValue> } }
 	| { arrayValue: { values?: FirestoreValue[] } };
 
@@ -20,6 +22,13 @@ export const FirestoreValueSchema: z.ZodType<FirestoreValue> = z.lazy(() =>
 		z.object({ stringValue: z.string() }),
 		z.object({ bytesValue: z.string() }),
 		z.object({ timestampValue: z.string() }),
+		z.object({ referenceValue: z.string() }),
+		z.object({
+			geoPointValue: z.object({
+				latitude: z.number(),
+				longitude: z.number()
+			})
+		}),
 		z.object({
 			mapValue: z.object({
 				fields: z.record(z.string(), FirestoreValueSchema).optional()

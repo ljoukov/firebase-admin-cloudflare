@@ -1,5 +1,7 @@
 export { FieldValue, getFieldValueKind, type FieldValueKind } from './field-value.js';
 export { FieldPath } from './field-path.js';
+export { Bytes } from './bytes.js';
+export { GeoPoint } from './geo-point.js';
 export { Timestamp } from './timestamp.js';
 export type { DocumentData, SetOptions, TransactionOptions } from './firestore.js';
 export {

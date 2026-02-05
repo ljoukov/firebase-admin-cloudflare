@@ -72,6 +72,7 @@ Note: write methods return a `WriteResult` (with `writeTime`), matching the Admi
 
 - `FieldPath` and `FieldPath.documentId()`
 - `FieldValue.delete()`, `serverTimestamp()`, `arrayUnion()`, `arrayRemove()`, `increment()`, `maximum()`, `minimum()`
+- `Bytes` and `GeoPoint` value types
 
 ## Supported (client-style wrappers)
 
@@ -97,4 +98,4 @@ The Admin SDK surface is large (it re-exports most of `@google-cloud/firestore`)
 - Aggregations (`getCountFromServer`, `getAggregateFromServer`, `RunAggregationQuery`)
 - Query listeners (`Query.onSnapshot`) and metadata changes
 - BulkWriter, bundles, partition queries, streaming `Write`
-- Field value types like `GeoPoint`, `Bytes`, and `DocumentReference` stored as a value
+- Field value types like `DocumentReference` stored as a value

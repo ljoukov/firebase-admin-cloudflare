@@ -1,4 +1,6 @@
 import { Timestamp } from '../timestamp.js';
+import { Bytes } from '../bytes.js';
+import { GeoPoint } from '../geo-point.js';
 
 import type { FirestoreValue } from './types.js';
 
@@ -51,6 +53,12 @@ export function toFirestoreValue(
 	}
 	if (value instanceof Date) {
 		return { timestampValue: value.toISOString() };
+	}
+	if (value instanceof Bytes) {
+		return { bytesValue: value.toBase64() };
+	}
+	if (value instanceof GeoPoint) {
+		return { geoPointValue: { latitude: value.latitude, longitude: value.longitude } };
 	}
 	if (value instanceof Uint8Array) {
 		return { bytesValue: bytesToBase64(value) };
@@ -110,7 +118,7 @@ export function fromFirestoreValue(value: FirestoreValue): unknown {
 		return value.stringValue;
 	}
 	if ('bytesValue' in value) {
-		return value.bytesValue;
+		return Bytes.fromBase64String(value.bytesValue);
 	}
 	if ('timestampValue' in value) {
 		const date = new Date(value.timestampValue);
@@ -118,6 +126,12 @@ export function fromFirestoreValue(value: FirestoreValue): unknown {
 			return value.timestampValue;
 		}
 		return Timestamp.fromDate(date);
+	}
+	if ('referenceValue' in value) {
+		return value.referenceValue;
+	}
+	if ('geoPointValue' in value) {
+		return new GeoPoint(value.geoPointValue.latitude, value.geoPointValue.longitude);
 	}
 	if ('arrayValue' in value) {
 		const values = value.arrayValue.values ?? [];

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { Bytes } from '../src/firestore/bytes.js';
+import { GeoPoint } from '../src/firestore/geo-point.js';
 import { Timestamp } from '../src/firestore/timestamp.js';
 import { fromFirestoreValue, toFirestoreValue } from '../src/firestore/rest/value.js';
 
@@ -19,6 +21,14 @@ describe('Firestore REST value conversions', () => {
 
 		const ts = Timestamp.fromDate(date);
 		expect(toFirestoreValue(ts)).toEqual({ timestampValue: '2026-02-04T00:00:00.000Z' });
+	});
+
+	it('encodes Bytes and GeoPoint', () => {
+		const bytes = Bytes.fromUint8Array(new Uint8Array([1, 2, 3]));
+		expect(toFirestoreValue(bytes)).toEqual({ bytesValue: 'AQID' });
+
+		const point = new GeoPoint(1, 2);
+		expect(toFirestoreValue(point)).toEqual({ geoPointValue: { latitude: 1, longitude: 2 } });
 	});
 
 	it('encodes arrays and objects', () => {
@@ -59,5 +69,16 @@ describe('Firestore REST value conversions', () => {
 		const out = fromFirestoreValue({ timestampValue: '2026-02-04T00:00:00.000Z' });
 		expect(out).toBeInstanceOf(Timestamp);
 		expect((out as Timestamp).toDate().toISOString()).toBe('2026-02-04T00:00:00.000Z');
+	});
+
+	it('decodes bytesValue and geoPointValue', () => {
+		const bytes = fromFirestoreValue({ bytesValue: 'AQID' });
+		expect(bytes).toBeInstanceOf(Bytes);
+		expect((bytes as Bytes).toBase64()).toBe('AQID');
+
+		const point = fromFirestoreValue({ geoPointValue: { latitude: 1, longitude: 2 } });
+		expect(point).toBeInstanceOf(GeoPoint);
+		expect((point as GeoPoint).latitude).toBe(1);
+		expect((point as GeoPoint).longitude).toBe(2);
 	});
 });
