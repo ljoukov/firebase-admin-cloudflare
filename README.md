@@ -161,6 +161,9 @@ You can generate/download one from:
 - **Google Cloud Console:** IAM & Admin → **Service Accounts** → select/create an account → **Keys** → **Add key** →
   **Create new key** → JSON
 
+<img width="932" height="877" alt="image" src="https://github.com/user-attachments/assets/9939573e-f2f1-48bc-93ec-b50830d5f0bb" />
+
+
 Store that JSON as a secret in Cloudflare (recommended):
 
 ```bash
