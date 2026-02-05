@@ -29,6 +29,10 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: npm
+      - name: Tool versions
+        run: |
+          node --version
+          npm --version
       - run: npm ci
       - name: Validate tag matches package.json version
         run: |
