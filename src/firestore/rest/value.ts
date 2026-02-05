@@ -36,8 +36,7 @@ function isDocumentReferenceLike(value: unknown): value is DocumentReferenceLike
 	if (typeof firestore._getRestClient !== 'function') {
 		return false;
 	}
-	const getRestClient = firestore._getRestClient as () => unknown;
-	const rest = getRestClient();
+	const rest = (firestore._getRestClient as () => unknown).call(firestore);
 	if (typeof rest !== 'object' || rest === null) {
 		return false;
 	}

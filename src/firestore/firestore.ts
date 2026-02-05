@@ -2027,6 +2027,7 @@ export class BulkWriter {
 	private scheduled = false;
 	private processing = false;
 	private closed = false;
+	private batchWriteDisabled = false;
 	private readonly maxBatchSize = 20;
 	private readonly maxAttempts = 10;
 
@@ -2254,13 +2255,84 @@ export class BulkWriter {
 		}
 	}
 
+	private async processBatchViaCommit(batch: BulkWriterOperation[]): Promise<void> {
+		const rest = this.firestore._getRestClient();
+		const retryQueue: BulkWriterOperation[] = [];
+		let retryBackoffMs = 0;
+
+		for (const entry of batch) {
+			try {
+				const resp = await rest.commit({ writes: [entry.write] });
+				const result = writeResultFromCommit(resp, 0);
+				entry.resolve(result);
+				for (const listener of this.writeResultListeners) {
+					listener(entry.documentRef, result);
+				}
+				this.pendingOpIds.delete(entry.opId);
+				this.notifyFlushWaiters();
+			} catch (error) {
+				entry.failedAttempts += 1;
+				const message = error instanceof Error ? error.message : String(error);
+				const errorObj = new BulkWriterError({
+					code: error instanceof FirestoreApiError ? error.httpStatus : 0,
+					message,
+					documentRef: entry.documentRef,
+					operationType: entry.operationType,
+					failedAttempts: entry.failedAttempts
+				});
+
+				const defaultRetryable =
+					error instanceof FirestoreApiError &&
+					(error.apiStatus === 'ABORTED' || error.apiStatus === 'UNAVAILABLE') &&
+					entry.failedAttempts < this.maxAttempts;
+				const shouldRetry = this.writeErrorListener
+					? this.writeErrorListener(errorObj)
+					: defaultRetryable;
+				if (shouldRetry && entry.failedAttempts < this.maxAttempts) {
+					retryQueue.push(entry);
+					const backoff = Math.min(1000 * 2 ** (entry.failedAttempts - 1), 10_000);
+					retryBackoffMs = Math.max(retryBackoffMs, backoff);
+					continue;
+				}
+
+				entry.reject(errorObj);
+				this.pendingOpIds.delete(entry.opId);
+				this.notifyFlushWaiters();
+			}
+		}
+
+		if (retryQueue.length > 0) {
+			if (retryBackoffMs > 0) {
+				await sleep(retryBackoffMs);
+			}
+			for (let i = retryQueue.length - 1; i >= 0; i -= 1) {
+				this.queue.unshift(retryQueue[i]);
+			}
+		}
+	}
+
 	private async processBatch(batch: BulkWriterOperation[]): Promise<void> {
 		const rest = this.firestore._getRestClient();
+
+		if (this.batchWriteDisabled) {
+			await this.processBatchViaCommit(batch);
+			return;
+		}
 
 		let response: Awaited<ReturnType<typeof rest.batchWrite>> | null = null;
 		try {
 			response = await rest.batchWrite({ writes: batch.map((entry) => entry.write) });
 		} catch (error) {
+			const shouldDisableBatchWrite =
+				error instanceof FirestoreApiError &&
+				error.httpStatus === 403 &&
+				error.message.includes('Batch writes require admin authentication');
+			if (shouldDisableBatchWrite) {
+				this.batchWriteDisabled = true;
+				await this.processBatchViaCommit(batch);
+				return;
+			}
+
 			const retryQueue: BulkWriterOperation[] = [];
 			let retryBackoffMs = 0;
 			for (const entry of batch) {
